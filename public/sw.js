@@ -8,6 +8,10 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Apenas passa as requisições para frente para manter o app online
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
+  // Apenas deixa o navegador gerenciar as requisições normalmente
+  event.respondWith(
+    fetch(event.request).catch(() => {
+      return caches.match(event.request);
+    })
+  );
 });
