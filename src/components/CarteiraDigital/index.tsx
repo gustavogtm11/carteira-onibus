@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { Printer, Smartphone, Download } from 'lucide-react';
+import { useRef } from 'react';
+import { Printer, Smartphone } from 'lucide-react';
 
 // Tipagem com os novos campos (matrícula e instituição dinâmica)
 interface Estudante {
