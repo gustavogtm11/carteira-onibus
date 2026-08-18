@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Ícone de Ônibus na aba do navegador -->
+    <link rel="icon" type="image/svg+xml" href="https://api.iconify.design/lucide:bus.svg?color=%230B2341" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Carteira de Transporte Escolar</title>
+    <!-- Vincula o Manifesto do PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0B2341" />
+  </head>
+  <body class="bg-gray-50 text-gray-900 antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Registra o Service Worker para habilitar o PWA
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('ServiceWorker registrado com sucesso:', reg.scope))
+            .catch(err => console.log('Falha ao registrar ServiceWorker:', err));
+        });
+      }
+    </script>
+  </body>
+</html>
