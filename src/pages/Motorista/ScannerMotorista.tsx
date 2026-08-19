@@ -1,6 +1,6 @@
 // src/pages/Motorista/ScannerMotorista.tsx
 import { useState, useEffect, useRef } from 'react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { doc, getDoc, collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 import { db, auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -21,7 +21,6 @@ interface EstudanteScan {
 export default function ScannerMotorista() {
   const { user } = useAuth();
   
-  // Tratamento seguro de tipagem para o usuário e suas roles
   const userAny = user as any;
   const roleStr = String(userAny?.role || '');
   const isFiscal = roleStr === 'fiscal';
@@ -29,29 +28,26 @@ export default function ScannerMotorista() {
   const isMotorista = roleStr === 'motorista';
   const userCpf = userAny?.cpf ? String(userAny.cpf).replace(/\D/g, '') : '';
 
-  // Configurações da viagem atual
   const [rotasDisponiveis, setRotasDisponiveis] = useState<string[]>([]);
   const [rotaAtual, setRotaAtual] = useState('');
   
-  // Sentido Manual e Horários Configuráveis
   const [tipoViagem, setTipoViagem] = useState<'ida' | 'volta'>('ida');
   const [horaIda, setHoraIda] = useState(localStorage.getItem('horaIda') || '06:00');
   const [horaVolta, setHoraVolta] = useState(localStorage.getItem('horaVolta') || '12:00');
   
-  // Estados do Scanner e Confirmação
   const [estudante, setEstudante] = useState<EstudanteScan | null>(null);
   const [status, setStatus] = useState<'idle' | 'success' | 'warning' | 'error' | 'loading' | 'confirmacao'>('idle');
   const [mensagem, setMensagem] = useState('');
   const [estudantePendente, setEstudantePendente] = useState<{ dados: any, sentido: 'ida' | 'volta' } | null>(null);
   
   const isProcessingRef = useRef(false);
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
 
   useEffect(() => {
     localStorage.setItem('horaIda', horaIda);
     localStorage.setItem('horaVolta', horaVolta);
   }, [horaIda, horaVolta]);
 
-  // Busca de rotas garantida utilizando o CPF limpo do motorista
   useEffect(() => {
     const buscarRotas = async () => {
       if (!user) return;
@@ -69,7 +65,6 @@ export default function ScannerMotorista() {
         const snap = await getDocs(q);
         let lista = snap.docs.map(d => d.data().nome_rota as string);
         
-        // Fallback para rotas legadas vinculadas por e-mail ou nome de motorista
         if (lista.length === 0 && isMotorista && user.email) {
           const snapLegado = await getDocs(query(collection(db, 'rotas'), where('motorista_email', '==', user.email)));
           lista = snapLegado.docs.map(d => d.data().nome_rota as string);
@@ -130,10 +125,15 @@ export default function ScannerMotorista() {
     }, 3500);
   };
 
+  // Inicialização fluida da Câmera (Traseira no celular / Padrão no PC)
   useEffect(() => {
-    const scanner = new Html5QrcodeScanner("qr-reader", { fps: 15, qrbox: { width: 250, height: 250 } }, false);
+    const readerId = "qr-reader-container";
+    const html5QrCode = new Html5Qrcode(readerId);
+    html5QrCodeRef.current = html5QrCode;
 
-    const onScanSuccess = async (decodedText: string) => {
+    const config = { fps: 15, qrbox: { width: 250, height: 250 } };
+
+    const qrCodeSuccessCallback = async (decodedText: string) => {
       if (isProcessingRef.current) return;
       isProcessingRef.current = true;
       setStatus('loading');
@@ -185,9 +185,28 @@ export default function ScannerMotorista() {
       }
     };
 
-    scanner.render(onScanSuccess, () => {});
-    return () => { scanner.clear().catch(console.error); };
-  }, [rotaAtual, horaIda, horaVolta, tipoViagem, user]);
+    // Tenta iniciar com a câmera traseira (environment). Se não suportar, usa a padrão do dispositivo.
+    html5QrCode.start(
+      { facingMode: "environment" },
+      config,
+      qrCodeSuccessCallback,
+      () => {}
+    ).catch((err) => {
+      console.warn("Tentando iniciar com câmera padrão (fallback)...", err);
+      html5QrCode.start(
+        { facingMode: "user" },
+        config,
+        qrCodeSuccessCallback,
+        () => {}
+      ).catch(e => console.error("Erro crítico ao abrir câmera:", e));
+    });
+
+    return () => {
+      if (html5QrCode && html5QrCode.isScanning) {
+        html5QrCode.stop().then(() => html5QrCode.clear()).catch(console.error);
+      }
+    };
+  }, [rotaAtual, horaIda, horaVolta, tipoViagem]);
 
   const confirmarEmbarque = async () => {
     if (!estudantePendente) return;
@@ -271,7 +290,9 @@ export default function ScannerMotorista() {
               <p className="font-bold text-white tracking-widest uppercase text-sm">Validando...</p>
             </div>
           )}
-          <div id="qr-reader" className="w-full text-black bg-black" style={{ display: status === 'confirmacao' ? 'none' : 'block' }}></div>
+          
+          {/* Contêiner dedicado para a câmera */}
+          <div id="qr-reader-container" className="w-full text-black bg-black overflow-hidden" style={{ display: status === 'confirmacao' ? 'none' : 'block' }}></div>
           
           {status === 'confirmacao' && estudantePendente && (
             <div className="absolute inset-0 bg-yellow-500 text-gray-900 flex flex-col items-center justify-center p-6 z-20">
