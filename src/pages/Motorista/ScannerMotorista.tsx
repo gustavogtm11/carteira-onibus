@@ -24,8 +24,8 @@ export default function ScannerMotorista() {
   const userAny = user as any;
   const roleStr = String(userAny?.role || '');
   const isFiscal = roleStr === 'fiscal' || roleStr === 'admin';
-  const isMotorista = roleStr === 'motorista';
   const userCpf = userAny?.cpf ? String(userAny.cpf).replace(/\D/g, '') : '';
+  const userEmail = user?.email ? user.email.trim().toLowerCase() : '';
 
   const [rotasDisponiveis, setRotasDisponiveis] = useState<string[]>([]);
   const [rotaAtual, setRotaAtual] = useState('');
@@ -74,35 +74,47 @@ export default function ScannerMotorista() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
+  // Busca robusta de rotas para o motorista logado
   useEffect(() => {
     const buscarRotas = async () => {
       if (!user) return;
       try {
-        let q;
+        let listaRotasSet = new Set<string>();
+
         if (isFiscal) {
-          q = collection(db, 'rotas');
-        } else if (userCpf) {
-          q = query(collection(db, 'rotas'), where('motorista_cpf', '==', userCpf));
+          const snap = await getDocs(collection(db, 'rotas'));
+          snap.docs.forEach(d => {
+            const nome = d.data().nome_rota || d.data().nome;
+            if (nome) listaRotasSet.add(String(nome).trim());
+          });
         } else {
-          q = query(collection(db, 'rotas'), where('motorista_cpf', '==', ''));
-        }
-        
-        const snap = await getDocs(q);
-        let lista = snap.docs.map(d => d.data().nome_rota as string);
-        
-        if (lista.length === 0 && isMotorista && user.email) {
-          const snapLegado = await getDocs(query(collection(db, 'rotas'), where('motorista_email', '==', user.email)));
-          lista = snapLegado.docs.map(d => d.data().nome_rota as string);
+          // Busca por CPF do motorista
+          if (userCpf) {
+            const snapCpf = await getDocs(query(collection(db, 'rotas'), where('motorista_cpf', '==', userCpf)));
+            snapCpf.docs.forEach(d => {
+              const nome = d.data().nome_rota || d.data().nome;
+              if (nome) listaRotasSet.add(String(nome).trim());
+            });
+          }
+          // Busca por Email do motorista (legado)
+          if (userEmail) {
+            const snapEmail = await getDocs(query(collection(db, 'rotas'), where('motorista_email', '==', userEmail)));
+            snapEmail.docs.forEach(d => {
+              const nome = d.data().nome_rota || d.data().nome;
+              if (nome) listaRotasSet.add(String(nome).trim());
+            });
+          }
         }
 
-        setRotasDisponiveis(lista);
-        if (lista.length > 0) setRotaAtual(lista[0]);
+        const listaFinal = Array.from(listaRotasSet);
+        setRotasDisponiveis(listaFinal);
+        if (listaFinal.length > 0) setRotaAtual(listaFinal[0]);
       } catch (error) {
         console.error("Erro ao buscar rotas", error);
       }
     };
     buscarRotas();
-  }, [user, isFiscal, isMotorista, userCpf]);
+  }, [user, isFiscal, userCpf, userEmail]);
 
   useEffect(() => {
     const carregarControleDeEmbarque = async () => {
@@ -335,7 +347,7 @@ export default function ScannerMotorista() {
                 onChange={e => setRotaAtual(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-300 rounded-lg p-2 text-sm font-bold text-[#0B2341] outline-none"
               >
-                {rotasDisponiveis.length === 0 ? <option value="">Sem rotas</option> : rotasDisponiveis.map(r => <option key={r} value={r}>{r}</option>)}
+                {rotasDisponiveis.length === 0 ? <option value="">Sem rotas atreladas</option> : rotasDisponiveis.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
             <button 
@@ -429,7 +441,6 @@ export default function ScannerMotorista() {
         </div>
       </div>
 
-      {/* MODAL FALTANTES */}
       {showFaltantes && (
         <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setShowFaltantes(false)}>
           <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
@@ -468,7 +479,6 @@ export default function ScannerMotorista() {
         </div>
       )}
 
-      {/* MODAL HISTÓRICO DE HOJE COM LOCALIZAÇÃO */}
       {showHistorico && (
         <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setShowHistorico(false)}>
           <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
