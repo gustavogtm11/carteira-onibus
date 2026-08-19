@@ -6,7 +6,7 @@ import { signOut } from 'firebase/auth';
 import { auth, db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { LogOut, Bus, Repeat, MapPin, Calendar, Download, AlertOctagon, MessageCircle, Map } from 'lucide-react';
+import { LogOut, Bus, Repeat, MapPin, Calendar, Download, AlertOctagon, MessageCircle, Map, FileText, Printer, X } from 'lucide-react';
 
 interface EstudanteDados {
   nome: string;
@@ -35,6 +35,14 @@ interface RotaInfo {
   whatsapp_link?: string;
 }
 
+interface Declaracao {
+  id: string;
+  titulo: string;
+  conteudoHtml: string;
+  assinatura_url?: string;
+  rotas: string[];
+}
+
 export default function CarteiraDigital() {
   const { user } = useAuth();
   const { showAlert } = useAlert();
@@ -42,10 +50,13 @@ export default function CarteiraDigital() {
   const [estudante, setEstudante] = useState<EstudanteDados | null>(null);
   const [historico, setHistorico] = useState<Viagem[]>([]);
   const [whatsappRota, setWhatsappRota] = useState<string>('');
+  const [declaracoes, setDeclaracoes] = useState<Declaracao[]>([]);
+  const [declaracaoAtiva, setDeclaracaoAtiva] = useState<Declaracao | null>(null);
   
   const [cpfVinculo, setCpfVinculo] = useState('');
   const [loading, setLoading] = useState(true);
   const [flipped, setFlipped] = useState(false);
+  const [modoImpressao, setModoImpressao] = useState(false);
 
   useEffect(() => {
     const buscarDados = async () => {
@@ -82,6 +93,7 @@ export default function CarteiraDigital() {
 
             buscarHistorico(cpfLimpo);
             buscarWhatsappDaRota(dadosAluno.rota);
+            buscarDeclaracoes(dadosAluno.rota);
           }
         }
       } catch (error) {
@@ -137,6 +149,27 @@ export default function CarteiraDigital() {
     }
   };
 
+  const buscarDeclaracoes = async (nomeRota: string) => {
+    try {
+      // Como o Firebase tem limitações com arrays em algumas consultas simples, 
+      // buscamos as declarações e filtramos em memória para maior segurança
+      const snap = await getDocs(collection(db, 'declaracoes'));
+      const lista: Declaracao[] = [];
+      
+      snap.forEach(doc => {
+        const data = doc.data() as Declaracao;
+        // Se a declaração é para 'Todas' ou inclui a rota do aluno, nós listamos
+        if (data.rotas && (data.rotas.includes(nomeRota) || data.rotas.includes('Todas'))) {
+          lista.push({ ...data, id: doc.id });
+        }
+      });
+      
+      setDeclaracoes(lista);
+    } catch (error) {
+      console.error("Erro ao buscar declarações:", error);
+    }
+  };
+
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, '');
     if (value.length > 11) value = value.slice(0, 11);
@@ -178,6 +211,7 @@ export default function CarteiraDigital() {
         setEstudante(dadosAluno);
         buscarHistorico(cpfLimpo);
         buscarWhatsappDaRota(dadosAluno.rota);
+        buscarDeclaracoes(dadosAluno.rota);
         showAlert('Sua carteirinha foi vinculada com sucesso!', 'success');
       } else {
         showAlert('CPF não encontrado. Procure a prefeitura para se cadastrar.', 'error');
@@ -227,6 +261,26 @@ export default function CarteiraDigital() {
   
   const estaVencido = verificarVencimento();
 
+  const parseVariaveisDeclaracao = (html: string) => {
+    if (!html || !estudante) return '';
+    return html
+      .replace(/\{\{nome_aluno\}\}/g, estudante.nome || '')
+      .replace(/\{\{cpf_aluno\}\}/g, formatarCPF(estudante.cpf) || '')
+      .replace(/\{\{instituicao\}\}/g, estudante.instituicao_destino || '')
+      .replace(/\{\{rota\}\}/g, estudante.rota || '')
+      .replace(/\{\{curso\}\}/g, estudante.curso || '')
+      .replace(/\{\{matricula\}\}/g, estudante.matricula || '');
+  };
+
+  const imprimirDeclaracao = (decl: Declaracao) => {
+    setDeclaracaoAtiva(decl);
+    setModoImpressao(true);
+    setTimeout(() => {
+      window.print();
+      setModoImpressao(false);
+    }, 500);
+  };
+
   if (loading) return (
     <div className="h-[100dvh] bg-gray-50 flex flex-col items-center justify-center font-bold text-[#0B2341]">
       <div className="w-10 h-10 border-4 border-[#395D34] border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -235,9 +289,77 @@ export default function CarteiraDigital() {
   );
 
   return (
-    <div className="h-[100dvh] bg-gray-100 flex flex-col font-sans overflow-hidden">
+    <div className={`h-[100dvh] bg-gray-100 flex flex-col font-sans overflow-hidden ${modoImpressao ? 'print:bg-white print:overflow-visible' : ''}`}>
       
-      <nav className="shrink-0 bg-[#0B2341] text-white p-4 flex justify-between items-center shadow-md z-10">
+      {/* ================= ESTILOS GLOBAIS DE IMPRESSÃO (Sem bordas, ocupa 100%) ================= */}
+      <style>
+        {`
+          @media print {
+            @page { margin: 0; padding: 0; }
+            body { margin: 0; padding: 0; background: white; }
+          }
+        `}
+      </style>
+
+      {/* ================= TELA DE IMPRESSÃO DA DECLARAÇÃO ================= */}
+      {modoImpressao && declaracaoAtiva && (
+        <div className="hidden print:block w-full min-h-screen bg-white m-0 p-0 absolute top-0 left-0 z-[99999]">
+          <img src="/timbre.png" alt="Timbre" className="w-full h-auto object-cover m-0 p-0 block" />
+          
+          <div className="p-12 text-justify text-gray-900 font-serif leading-relaxed text-lg" 
+               dangerouslySetInnerHTML={{ __html: parseVariaveisDeclaracao(declaracaoAtiva.conteudoHtml) }} />
+          
+          {declaracaoAtiva.assinatura_url && (
+            <div className="mt-16 flex flex-col items-center justify-center w-full">
+              <img src={declaracaoAtiva.assinatura_url} alt="Assinatura" className="h-24 w-auto object-contain mb-2" />
+              <div className="border-t border-black w-64 text-center pt-2 font-bold uppercase text-sm">
+                Assinatura Autorizada
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================= MODAL VISUALIZAÇÃO DECLARAÇÃO (Antes de Imprimir) ================= */}
+      {!modoImpressao && declaracaoAtiva && (
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in print:hidden">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-[#0B2341] p-4 flex items-center justify-between text-white shrink-0">
+              <div className="flex items-center">
+                <FileText size={20} className="mr-2 text-[#395D34]" />
+                <h3 className="font-bold">{declaracaoAtiva.titulo}</h3>
+              </div>
+              <button onClick={() => setDeclaracaoAtiva(null)} className="text-white/60 hover:text-white p-1"><X size={24} /></button>
+            </div>
+            
+            <div className="p-0 overflow-y-auto flex-1 bg-gray-50 border-b border-gray-200">
+              <div className="bg-white shadow-sm border m-4 min-h-[500px]">
+                 <img src="/timbre.png" alt="Timbre" className="w-full h-auto object-cover block" />
+                 <div className="p-8 text-justify text-gray-900 leading-relaxed" 
+                      dangerouslySetInnerHTML={{ __html: parseVariaveisDeclaracao(declaracaoAtiva.conteudoHtml) }} />
+                 {declaracaoAtiva.assinatura_url && (
+                    <div className="mt-12 mb-8 flex flex-col items-center justify-center w-full">
+                      <img src={declaracaoAtiva.assinatura_url} alt="Assinatura" className="h-20 w-auto object-contain mb-1" />
+                      <div className="border-t border-black w-48 text-center pt-1 font-bold uppercase text-xs">
+                        Assinatura Autorizada
+                      </div>
+                    </div>
+                 )}
+              </div>
+            </div>
+            
+            <div className="p-4 bg-white flex gap-3 shrink-0">
+              <button onClick={() => setDeclaracaoAtiva(null)} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition">Cancelar</button>
+              <button onClick={() => imprimirDeclaracao(declaracaoAtiva)} className="flex-1 flex justify-center items-center bg-[#395D34] text-white py-3 rounded-xl font-bold hover:bg-[#2c4928] shadow transition">
+                <Printer size={20} className="mr-2" /> Salvar PDF / Imprimir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= INTERFACE PRINCIPAL (Oculta na impressão) ================= */}
+      <nav className="shrink-0 bg-[#0B2341] text-white p-4 flex justify-between items-center shadow-md z-10 print:hidden">
         <div className="flex items-center">
           <Bus size={22} className="mr-2 text-[#395D34]" />
           <span className="font-bold text-lg">Transporte Escolar</span>
@@ -247,7 +369,7 @@ export default function CarteiraDigital() {
         </button>
       </nav>
 
-      <div className="flex-1 overflow-y-auto p-4 w-full max-w-md mx-auto flex flex-col gap-6">
+      <div className="flex-1 overflow-y-auto p-4 w-full max-w-md mx-auto flex flex-col gap-6 print:hidden">
         
         {!estudante ? (
           <div className="bg-white p-6 rounded-2xl shadow-md mt-10 border border-gray-200">
@@ -285,9 +407,9 @@ export default function CarteiraDigital() {
                 </div>
               )}
               
-              {/* CARTÃO COM FLIP 3D CORRIGIDO PARA MOBILE/SAFARI */}
+              {/* CARTÃO COM FLIP 3D CORRIGIDO */}
               <div 
-                className="w-full aspect-[1.58] bg-transparent cursor-pointer group"
+                className="w-full aspect-[1.58] bg-transparent cursor-pointer group relative"
                 style={{ perspective: '1000px' }}
                 onClick={() => setFlipped(!flipped)}
               >
@@ -299,10 +421,10 @@ export default function CarteiraDigital() {
                   }}
                 >
                   
-                  {/* FRENTE */}
+                  {/* ================= FRENTE DO CARTÃO ================= */}
                   <div 
-                    className={`absolute inset-0 w-full h-full bg-gradient-to-br from-white via-gray-50 to-blue-50/50 rounded-2xl p-5 flex flex-col justify-between text-gray-800 overflow-hidden border-2 shadow-xl ${estaVencido ? 'border-[#890013]' : 'border-[#0B2341]/30'}`}
-                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
+                    className={`absolute inset-0 w-full h-full bg-gradient-to-br from-white via-gray-50 to-blue-50 rounded-2xl p-5 flex flex-col justify-between text-gray-800 overflow-hidden border-2 shadow-xl ${estaVencido ? 'border-[#890013]' : 'border-[#0B2341]/30'}`}
+                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', backgroundColor: '#ffffff' }}
                   >
                     <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
                       <img src="/logo-prefeitura.png" alt="Marca D'água" className="w-2/3 object-contain" />
@@ -348,10 +470,10 @@ export default function CarteiraDigital() {
                     </div>
                   </div>
 
-                  {/* VERSO */}
+                  {/* ================= VERSO DO CARTÃO ================= */}
                   <div 
                     className="absolute inset-0 w-full h-full bg-white rounded-2xl p-5 flex flex-col justify-between border-2 border-gray-200 shadow-xl text-gray-800"
-                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)', backgroundColor: '#ffffff' }}
                   >
                     <div className="flex w-full h-full">
                       <div className="flex flex-col justify-center h-full w-[55%] pr-2 relative z-10">
@@ -387,25 +509,51 @@ export default function CarteiraDigital() {
                 </div>
               </div>
 
-              {whatsappRota && (
-                <a 
-                  href={whatsappRota} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="mt-4 w-full flex items-center justify-center gap-2 bg-[#25D366] text-white py-3.5 rounded-xl font-bold hover:bg-[#20ba5a] transition-colors shadow-md text-sm"
+              {/* Botões de Ações Dinâmicos */}
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                
+                <button 
+                  onClick={handleSalvarCarteira}
+                  className="w-full flex items-center justify-center gap-2 bg-[#0B2341] text-white py-3.5 rounded-xl font-bold hover:bg-[#071629] transition-colors shadow-md text-sm"
                 >
-                  <MessageCircle size={18} /> Grupo do WhatsApp da Rota
-                </a>
-              )}
-
-              <button 
-                onClick={handleSalvarCarteira}
-                className="mt-3 w-full flex items-center justify-center gap-2 bg-[#0B2341] text-white py-3.5 rounded-xl font-bold hover:bg-[#071629] transition-colors shadow-lg text-sm"
-              >
-                <Download size={18} /> Salvar na Carteira Digital
-              </button>
+                  <Download size={18} /> Salvar na Carteira
+                </button>
+                
+                {whatsappRota && (
+                  <a 
+                    href={whatsappRota} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 bg-[#25D366] text-white py-3.5 rounded-xl font-bold hover:bg-[#20ba5a] transition-colors shadow-md text-sm"
+                  >
+                    <MessageCircle size={18} /> Grupo da Rota
+                  </a>
+                )}
+              </div>
             </div>
 
+            {/* SEÇÃO DE DECLARAÇÕES (Só aparece se tiver alguma cadastrada pra ele) */}
+            {declaracoes.length > 0 && (
+              <div className="bg-blue-50/50 rounded-2xl shadow-sm border border-blue-100 p-4 shrink-0">
+                <h3 className="font-bold text-[#0B2341] mb-3 flex items-center border-b border-blue-200 pb-2 text-sm uppercase tracking-wider">
+                  <FileText size={18} className="mr-2 text-blue-600" /> Declarações Oficiais
+                </h3>
+                <div className="space-y-2">
+                  {declaracoes.map(decl => (
+                    <button 
+                      key={decl.id}
+                      onClick={() => setDeclaracaoAtiva(decl)}
+                      className="w-full flex justify-between items-center bg-white border border-blue-200 p-3 rounded-xl shadow-sm hover:border-blue-400 transition group text-left"
+                    >
+                      <span className="font-bold text-gray-800 text-sm group-hover:text-blue-700">{decl.titulo}</span>
+                      <Printer size={16} className="text-gray-400 group-hover:text-blue-600" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* HISTÓRICO DE VIAGENS */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col flex-1 min-h-[250px] mb-4">
               <h3 className="font-bold text-[#0B2341] mb-3 flex items-center border-b pb-2 text-sm uppercase tracking-wider shrink-0">
                 <Calendar size={18} className="mr-2 text-[#395D34]" /> Meu Histórico
@@ -436,7 +584,6 @@ export default function CarteiraDigital() {
                         </div>
                       </div>
                       
-                      {/* BOTÃO PARA ABRIR O LOCAL NO GOOGLE MAPS */}
                       {viagem.link_maps && (
                         <div className="mt-2 pl-12">
                           <a 
