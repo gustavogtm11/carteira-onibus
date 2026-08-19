@@ -48,6 +48,7 @@ export default function ScannerMotorista() {
     localStorage.setItem('horaVolta', horaVolta);
   }, [horaIda, horaVolta]);
 
+  // Busca de rotas vinculadas rigorosamente ao CPF limpo do motorista
   useEffect(() => {
     const buscarRotas = async () => {
       if (!user) return;
@@ -117,7 +118,6 @@ export default function ScannerMotorista() {
     setStatus(isExata ? 'success' : 'warning');
     setMensagem(isExata ? `Embarque Autorizado!` : 'Acesso Excepcional Liberado');
 
-    // Tempo de exibição do card na tela antes de voltar a escanear automaticamente
     setTimeout(() => {
       setStatus('idle');
       setEstudante(null);
@@ -126,7 +126,6 @@ export default function ScannerMotorista() {
     }, 2500);
   };
 
-  // Inicializa a câmera e garante que ela fica ativa continuamente
   useEffect(() => {
     const readerId = "qr-reader-container";
     const html5QrCode = new Html5Qrcode(readerId);
@@ -166,7 +165,10 @@ export default function ScannerMotorista() {
           else if (isHorarioProximo(horaVolta, 45)) sentidoCalculado = 'volta';
           setTipoViagem(sentidoCalculado);
 
-          const isRotaExata = dadosEstudante.rota === rotaAtual;
+          // CORREÇÃO: Normaliza os textos para evitar conflitos de letras maiúsculas/minúsculas ou espaços
+          const rotaAlunoLimpa = String(dadosEstudante.rota || '').trim().toLowerCase();
+          const rotaAtualLimpa = String(rotaAtual || '').trim().toLowerCase();
+          const isRotaExata = rotaAlunoLimpa === rotaAtualLimpa;
 
           if (isRotaExata) {
             await registrarViagem(dadosEstudante, sentidoCalculado, true);
@@ -281,14 +283,11 @@ export default function ScannerMotorista() {
           </div>
         </div>
 
-        {/* Caixa da Câmera (Sempre visível ao fundo) */}
         <div className={`bg-black rounded-2xl overflow-hidden shadow-xl mb-6 relative border-[4px] transition-all duration-300
           ${status === 'success' ? 'border-[#395D34]' : status === 'warning' || status === 'confirmacao' ? 'border-yellow-500' : status === 'error' ? 'border-[#890013]' : 'border-[#0B2341]'}`}
         >
-          {/* Contêiner da Câmera ativo permanentemente */}
           <div id="qr-reader-container" className="w-full text-black bg-black overflow-hidden"></div>
 
-          {/* Loading rápido sobre a câmera */}
           {status === 'loading' && (
             <div className="absolute inset-0 bg-[#0B2341]/80 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
               <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin mb-2"></div>
@@ -296,7 +295,6 @@ export default function ScannerMotorista() {
             </div>
           )}
 
-          {/* Card de Confirmação de Rota Diferente */}
           {status === 'confirmacao' && estudantePendente && (
             <div className="absolute inset-0 bg-yellow-500 text-gray-900 flex flex-col items-center justify-center p-6 z-30">
               <AlertTriangle size={45} className="mb-2 text-yellow-900 animate-pulse" />
@@ -314,7 +312,6 @@ export default function ScannerMotorista() {
             </div>
           )}
 
-          {/* Card Flutuante de SUCESSO (Aparece e some rápido sem fechar a câmera) */}
           {status === 'success' && estudante && (
             <div className="absolute inset-x-3 bottom-3 bg-[#395D34] text-white p-4 rounded-xl shadow-2xl flex items-center z-30 animate-in fade-in slide-in-from-bottom-3 border-2 border-white/30">
               <img src={estudante.foto_url} alt="Foto" className="w-14 h-14 rounded-xl border-2 border-white/50 object-cover mr-3 bg-gray-100 shrink-0" />
@@ -328,7 +325,6 @@ export default function ScannerMotorista() {
             </div>
           )}
 
-          {/* Card Flutuante de AVISO / EXCEPCIONAL */}
           {status === 'warning' && estudante && (
             <div className="absolute inset-x-3 bottom-3 bg-yellow-500 text-gray-900 p-4 rounded-xl shadow-2xl flex items-center z-30 animate-in fade-in slide-in-from-bottom-3 border-2 border-white/30">
               <img src={estudante.foto_url} alt="Foto" className="w-14 h-14 rounded-xl border-2 border-gray-900/20 object-cover mr-3 bg-gray-100 shrink-0" />
@@ -341,7 +337,6 @@ export default function ScannerMotorista() {
             </div>
           )}
 
-          {/* Card Flutuante de ERRO / BLOQUEADO */}
           {status === 'error' && mensagem && (
             <div className="absolute inset-x-3 bottom-3 bg-[#890013] text-white p-4 rounded-xl shadow-2xl flex items-center z-30 animate-in fade-in slide-in-from-bottom-3 border-2 border-white/30">
               <XCircle size={28} className="mr-3 shrink-0" />
