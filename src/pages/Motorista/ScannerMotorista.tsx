@@ -117,15 +117,16 @@ export default function ScannerMotorista() {
     setStatus(isExata ? 'success' : 'warning');
     setMensagem(isExata ? `Embarque Autorizado!` : 'Acesso Excepcional Liberado');
 
+    // Tempo de exibição do card na tela antes de voltar a escanear automaticamente
     setTimeout(() => {
       setStatus('idle');
       setEstudante(null);
       setMensagem('');
       isProcessingRef.current = false;
-    }, 3500);
+    }, 2500);
   };
 
-  // Inicialização fluida da Câmera (Traseira no celular / Padrão no PC)
+  // Inicializa a câmera e garante que ela fica ativa continuamente
   useEffect(() => {
     const readerId = "qr-reader-container";
     const html5QrCode = new Html5Qrcode(readerId);
@@ -156,7 +157,7 @@ export default function ScannerMotorista() {
           if (estaVencido) {
             setStatus('error');
             setMensagem('ACESSO NEGADO: Carteira Vencida!');
-            setTimeout(() => { setStatus('idle'); isProcessingRef.current = false; }, 4000);
+            setTimeout(() => { setStatus('idle'); isProcessingRef.current = false; }, 3000);
             return;
           }
 
@@ -176,16 +177,15 @@ export default function ScannerMotorista() {
         } else {
           setStatus('error');
           setMensagem('Estudante Não Encontrado.');
-          setTimeout(() => { setStatus('idle'); isProcessingRef.current = false; }, 3500);
+          setTimeout(() => { setStatus('idle'); isProcessingRef.current = false; }, 3000);
         }
       } catch (error) {
         setStatus('error');
         setMensagem('Erro de conexão ao validar qr code.');
-        setTimeout(() => { setStatus('idle'); isProcessingRef.current = false; }, 3500);
+        setTimeout(() => { setStatus('idle'); isProcessingRef.current = false; }, 3000);
       }
     };
 
-    // Tenta iniciar com a câmera traseira (environment). Se não suportar, usa a padrão do dispositivo.
     html5QrCode.start(
       { facingMode: "environment" },
       config,
@@ -223,7 +223,7 @@ export default function ScannerMotorista() {
       setStatus('idle');
       setMensagem('');
       isProcessingRef.current = false;
-    }, 3000);
+    }, 2500);
   };
 
   return (
@@ -246,7 +246,7 @@ export default function ScannerMotorista() {
         
         <div className="bg-white p-5 rounded-2xl mb-6 shadow-md border border-gray-200">
           <div className="mb-4">
-            <label className="block text-xs font-bold text-[#0B2341] uppercase tracking-wider mb-2">Selecione a Rota de Operação</label>
+            <label className="block text-xs font-bold text-[#0B2341] uppercase tracking-wider mb-2">Seu Veículo / Rota de Operação</label>
             <select 
               value={rotaAtual} 
               onChange={e => setRotaAtual(e.target.value)}
@@ -281,76 +281,82 @@ export default function ScannerMotorista() {
           </div>
         </div>
 
+        {/* Caixa da Câmera (Sempre visível ao fundo) */}
         <div className={`bg-black rounded-2xl overflow-hidden shadow-xl mb-6 relative border-[4px] transition-all duration-300
           ${status === 'success' ? 'border-[#395D34]' : status === 'warning' || status === 'confirmacao' ? 'border-yellow-500' : status === 'error' ? 'border-[#890013]' : 'border-[#0B2341]'}`}
         >
+          {/* Contêiner da Câmera ativo permanentemente */}
+          <div id="qr-reader-container" className="w-full text-black bg-black overflow-hidden"></div>
+
+          {/* Loading rápido sobre a câmera */}
           {status === 'loading' && (
-            <div className="absolute inset-0 bg-[#0B2341]/90 z-10 flex flex-col items-center justify-center backdrop-blur-sm">
-              <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mb-3"></div>
-              <p className="font-bold text-white tracking-widest uppercase text-sm">Validando...</p>
+            <div className="absolute inset-0 bg-[#0B2341]/80 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
+              <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin mb-2"></div>
+              <p className="font-bold text-white tracking-widest uppercase text-xs">Validando...</p>
             </div>
           )}
-          
-          {/* Contêiner dedicado para a câmera */}
-          <div id="qr-reader-container" className="w-full text-black bg-black overflow-hidden" style={{ display: status === 'confirmacao' ? 'none' : 'block' }}></div>
-          
+
+          {/* Card de Confirmação de Rota Diferente */}
           {status === 'confirmacao' && estudantePendente && (
-            <div className="absolute inset-0 bg-yellow-500 text-gray-900 flex flex-col items-center justify-center p-6 z-20">
-              <AlertTriangle size={50} className="mb-2 text-yellow-900 animate-pulse" />
-              <h2 className="font-black text-xl text-center mb-1 uppercase tracking-tight">Rota Diferente!</h2>
-              <div className="bg-white/50 rounded-xl p-3 w-full text-center mb-4 mt-2">
+            <div className="absolute inset-0 bg-yellow-500 text-gray-900 flex flex-col items-center justify-center p-6 z-30">
+              <AlertTriangle size={45} className="mb-2 text-yellow-900 animate-pulse" />
+              <h2 className="font-black text-lg text-center mb-1 uppercase tracking-tight">Rota Diferente!</h2>
+              <div className="bg-white/60 rounded-xl p-3 w-full text-center mb-3 mt-1">
                 <p className="text-sm font-bold text-gray-800">{estudantePendente.dados.nome}</p>
-                <p className="text-xs text-yellow-900 font-bold mt-1 uppercase">Matriculado em: {estudantePendente.dados.rota}</p>
+                <p className="text-xs text-yellow-900 font-bold mt-0.5 uppercase">Matriculado em: {estudantePendente.dados.rota}</p>
               </div>
-              <p className="text-center font-bold mb-4 text-sm w-full leading-tight">Deseja autorizar embarque na rota {rotaAtual}?</p>
+              <p className="text-center font-bold mb-4 text-xs w-full leading-tight">Deseja autorizar embarque na rota {rotaAtual}?</p>
               
               <div className="flex gap-3 w-full">
-                <button onClick={negarEmbarque} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold shadow-md transition">Negar</button>
-                <button onClick={confirmarEmbarque} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold shadow-md transition">Autorizar</button>
+                <button onClick={negarEmbarque} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl font-bold shadow transition text-sm">Negar</button>
+                <button onClick={confirmarEmbarque} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold shadow transition text-sm">Autorizar</button>
+              </div>
+            </div>
+          )}
+
+          {/* Card Flutuante de SUCESSO (Aparece e some rápido sem fechar a câmera) */}
+          {status === 'success' && estudante && (
+            <div className="absolute inset-x-3 bottom-3 bg-[#395D34] text-white p-4 rounded-xl shadow-2xl flex items-center z-30 animate-in fade-in slide-in-from-bottom-3 border-2 border-white/30">
+              <img src={estudante.foto_url} alt="Foto" className="w-14 h-14 rounded-xl border-2 border-white/50 object-cover mr-3 bg-gray-100 shrink-0" />
+              <div className="flex-1 overflow-hidden">
+                <h2 className="font-black text-base leading-tight truncate">{estudante.nome}</h2>
+                <p className="text-green-100 text-[10px] font-bold uppercase truncate">{estudante.instituicao}</p>
+                <div className="mt-1 inline-flex items-center bg-white/20 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">
+                  <CheckCircle size={10} className="mr-1"/> Embarque Confirmado
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Card Flutuante de AVISO / EXCEPCIONAL */}
+          {status === 'warning' && estudante && (
+            <div className="absolute inset-x-3 bottom-3 bg-yellow-500 text-gray-900 p-4 rounded-xl shadow-2xl flex items-center z-30 animate-in fade-in slide-in-from-bottom-3 border-2 border-white/30">
+              <img src={estudante.foto_url} alt="Foto" className="w-14 h-14 rounded-xl border-2 border-gray-900/20 object-cover mr-3 bg-gray-100 shrink-0" />
+              <div className="flex-1 overflow-hidden">
+                <h2 className="font-black text-base leading-tight truncate">{estudante.nome}</h2>
+                <p className="text-yellow-900 text-[10px] font-bold uppercase bg-yellow-400 rounded px-1.5 py-0.5 w-fit mt-1">
+                  Acesso Excepcional Liberado
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Card Flutuante de ERRO / BLOQUEADO */}
+          {status === 'error' && mensagem && (
+            <div className="absolute inset-x-3 bottom-3 bg-[#890013] text-white p-4 rounded-xl shadow-2xl flex items-center z-30 animate-in fade-in slide-in-from-bottom-3 border-2 border-white/30">
+              <XCircle size={28} className="mr-3 shrink-0" />
+              <div>
+                <h2 className="font-black text-sm leading-tight">Acesso Negado</h2>
+                <p className="text-red-100 text-xs font-medium">{mensagem}</p>
               </div>
             </div>
           )}
         </div>
 
-        {status === 'success' && estudante && (
-          <div className="bg-[#395D34] text-white p-5 rounded-2xl shadow-xl flex items-center animate-in fade-in slide-in-from-bottom-4">
-            <img src={estudante.foto_url} alt="Foto" className="w-16 h-16 rounded-xl border-2 border-white/50 object-cover mr-4 bg-gray-100" />
-            <div className="flex-1 overflow-hidden">
-              <h2 className="font-black text-lg leading-tight truncate">{estudante.nome}</h2>
-              <p className="text-green-100 text-[10px] font-bold uppercase">{estudante.instituicao}</p>
-              <div className="mt-1 inline-flex items-center bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                <CheckCircle size={10} className="mr-1"/> Salvo Automático
-              </div>
-            </div>
-          </div>
-        )}
-
-        {status === 'warning' && estudante && (
-          <div className="bg-yellow-500 text-gray-900 p-5 rounded-2xl shadow-xl flex items-center animate-in fade-in slide-in-from-bottom-4">
-            <img src={estudante.foto_url} alt="Foto" className="w-16 h-16 rounded-xl border-2 border-gray-900/20 object-cover mr-4 bg-gray-100" />
-            <div className="flex-1 overflow-hidden">
-              <h2 className="font-black text-lg leading-tight truncate">{estudante.nome}</h2>
-              <p className="text-yellow-900 text-[10px] font-bold uppercase bg-yellow-400 rounded px-1 w-fit mt-1">
-                Acesso Excepcional
-              </p>
-            </div>
-          </div>
-        )}
-
-        {status === 'error' && (
-          <div className="bg-[#890013] text-white p-5 rounded-2xl shadow-xl flex items-center animate-in fade-in slide-in-from-bottom-4">
-            <XCircle size={30} className="mr-3 shrink-0" />
-            <div>
-              <h2 className="font-black text-lg leading-tight">Bloqueado</h2>
-              <p className="text-red-100 text-xs font-bold">{mensagem}</p>
-            </div>
-          </div>
-        )}
-
         {status === 'idle' && (
-          <div className="text-center text-gray-500 mt-2 flex flex-col items-center justify-center flex-1">
-            <ScanLine size={40} className="mb-2 opacity-30 text-[#0B2341]" />
-            <p className="font-medium text-sm">Aponte a câmera para liberar embarque.</p>
+          <div className="text-center text-gray-500 mt-1 flex items-center justify-center">
+            <ScanLine size={18} className="mr-1.5 opacity-40 text-[#0B2341] animate-pulse" />
+            <p className="font-medium text-xs">Câmera ativa. Posicione o QR Code no quadrado.</p>
           </div>
         )}
 
