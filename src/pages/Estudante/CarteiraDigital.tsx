@@ -6,7 +6,7 @@ import { signOut } from 'firebase/auth';
 import { auth, db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { LogOut, Bus, Repeat, MapPin, Calendar, Download, AlertOctagon, MessageCircle } from 'lucide-react';
+import { LogOut, Bus, Repeat, MapPin, Calendar, Download, AlertOctagon, MessageCircle, Map } from 'lucide-react';
 
 interface EstudanteDados {
   nome: string;
@@ -70,7 +70,6 @@ export default function CarteiraDigital() {
             const dadosAluno = estudanteSnap.data() as EstudanteDados;
             setEstudante(dadosAluno);
 
-            // CORREÇÃO: Utiliza setDoc com merge para evitar o erro "No document to update"
             await setDoc(userRef, {
               uid: user.uid,
               email: user.email,
@@ -92,6 +91,7 @@ export default function CarteiraDigital() {
       }
     };
     buscarDados();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const buscarWhatsappDaRota = async (nomeRota: string) => {
@@ -165,7 +165,6 @@ export default function CarteiraDigital() {
       if (estudanteSnap.exists()) {
         const dadosAluno = estudanteSnap.data() as EstudanteDados;
         
-        // CORREÇÃO: Utiliza setDoc com merge para criar ou atualizar o documento do usuário com segurança[cite: 16]
         await setDoc(doc(db, 'users', user.uid), {
           uid: user.uid,
           email: user.email,
@@ -225,29 +224,30 @@ export default function CarteiraDigital() {
     dataVenc.setHours(23, 59, 59, 999);
     return hoje > dataVenc;
   };
+  
   const estaVencido = verificarVencimento();
 
   if (loading) return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center font-bold text-[#0B2341]">
+    <div className="h-[100dvh] bg-gray-50 flex flex-col items-center justify-center font-bold text-[#0B2341]">
       <div className="w-10 h-10 border-4 border-[#395D34] border-t-transparent rounded-full animate-spin mb-4"></div>
       Carregando carteira...
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col font-sans">
+    <div className="h-[100dvh] bg-gray-100 flex flex-col font-sans overflow-hidden">
       
-      <nav className="bg-[#0B2341] text-white p-4 flex justify-between items-center shadow-md">
+      <nav className="shrink-0 bg-[#0B2341] text-white p-4 flex justify-between items-center shadow-md z-10">
         <div className="flex items-center">
           <Bus size={22} className="mr-2 text-[#395D34]" />
           <span className="font-bold text-lg">Transporte Escolar</span>
         </div>
-        <button onClick={() => signOut(auth)} className="hover:text-red-300 transition-colors">
+        <button onClick={() => signOut(auth)} className="hover:text-red-300 transition-colors p-1">
           <LogOut size={20} />
         </button>
       </nav>
 
-      <div className="flex-1 p-4 max-w-md mx-auto w-full flex flex-col gap-6">
+      <div className="flex-1 overflow-y-auto p-4 w-full max-w-md mx-auto flex flex-col gap-6">
         
         {!estudante ? (
           <div className="bg-white p-6 rounded-2xl shadow-md mt-10 border border-gray-200">
@@ -275,7 +275,7 @@ export default function CarteiraDigital() {
           </div>
         ) : (
           <>
-            <div className="text-center mt-2">
+            <div className="text-center mt-2 shrink-0">
               <p className="text-gray-400 text-xs mb-2 uppercase font-semibold tracking-wider">Toque no cartão para girar</p>
               
               {estaVencido && (
@@ -285,6 +285,7 @@ export default function CarteiraDigital() {
                 </div>
               )}
               
+              {/* CARTÃO COM FLIP 3D CORRIGIDO PARA MOBILE/SAFARI */}
               <div 
                 className="w-full aspect-[1.58] bg-transparent cursor-pointer group"
                 style={{ perspective: '1000px' }}
@@ -298,9 +299,10 @@ export default function CarteiraDigital() {
                   }}
                 >
                   
+                  {/* FRENTE */}
                   <div 
-                    className={`absolute w-full h-full bg-gradient-to-br from-white via-gray-50 to-blue-50/50 rounded-2xl p-5 flex flex-col justify-between text-gray-800 overflow-hidden border-2 shadow-xl ${estaVencido ? 'border-[#890013]' : 'border-[#0B2341]/30'}`}
-                    style={{ backfaceVisibility: 'hidden' }}
+                    className={`absolute inset-0 w-full h-full bg-gradient-to-br from-white via-gray-50 to-blue-50/50 rounded-2xl p-5 flex flex-col justify-between text-gray-800 overflow-hidden border-2 shadow-xl ${estaVencido ? 'border-[#890013]' : 'border-[#0B2341]/30'}`}
+                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
                   >
                     <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
                       <img src="/logo-prefeitura.png" alt="Marca D'água" className="w-2/3 object-contain" />
@@ -317,9 +319,9 @@ export default function CarteiraDigital() {
                       <span className="bg-[#395D34] text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase shadow-sm">Oficial</span>
                     </div>
 
-                    <div className="flex gap-4 items-center z-10">
+                    <div className="flex gap-4 items-center z-10 h-full mt-2">
                       <img src={estudante.foto_url} alt="Foto" className={`w-20 h-24 object-cover rounded-xl border-2 shadow-md bg-gray-200 shrink-0 ${estaVencido ? 'border-[#890013] grayscale opacity-80' : 'border-[#0B2341]'}`} />
-                      <div className="flex flex-col overflow-hidden text-left w-full">
+                      <div className="flex flex-col justify-center overflow-hidden text-left w-full h-full">
                         <p className="text-[9px] text-gray-400 uppercase tracking-widest font-extrabold leading-none">Estudante</p>
                         <p className={`font-black text-base leading-tight truncate w-full mt-0.5 text-[#0B2341]`} title={estudante.nome}>{abreviarNome(estudante.nome)}</p>
                         
@@ -346,9 +348,10 @@ export default function CarteiraDigital() {
                     </div>
                   </div>
 
+                  {/* VERSO */}
                   <div 
-                    className="absolute w-full h-full bg-white rounded-2xl p-5 flex flex-col justify-between border-2 border-gray-200 shadow-xl text-gray-800"
-                    style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+                    className="absolute inset-0 w-full h-full bg-white rounded-2xl p-5 flex flex-col justify-between border-2 border-gray-200 shadow-xl text-gray-800"
+                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
                   >
                     <div className="flex w-full h-full">
                       <div className="flex flex-col justify-center h-full w-[55%] pr-2 relative z-10">
@@ -389,50 +392,63 @@ export default function CarteiraDigital() {
                   href={whatsappRota} 
                   target="_blank" 
                   rel="noopener noreferrer"
-                  className="mt-4 w-full flex items-center justify-center gap-2 bg-[#25D366] text-white py-3.5 rounded-xl font-bold hover:bg-[#20ba5a] transition-colors shadow-md"
+                  className="mt-4 w-full flex items-center justify-center gap-2 bg-[#25D366] text-white py-3.5 rounded-xl font-bold hover:bg-[#20ba5a] transition-colors shadow-md text-sm"
                 >
-                  <MessageCircle size={20} /> Entrar no Grupo do WhatsApp da Rota
+                  <MessageCircle size={18} /> Grupo do WhatsApp da Rota
                 </a>
               )}
 
               <button 
                 onClick={handleSalvarCarteira}
-                className="mt-3 w-full flex items-center justify-center gap-2 bg-[#0B2341] text-white py-3.5 rounded-xl font-bold hover:bg-[#071629] transition-colors shadow-lg"
+                className="mt-3 w-full flex items-center justify-center gap-2 bg-[#0B2341] text-white py-3.5 rounded-xl font-bold hover:bg-[#071629] transition-colors shadow-lg text-sm"
               >
                 <Download size={18} /> Salvar na Carteira Digital
               </button>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 flex-1 mb-6">
-              <h3 className="font-bold text-[#0B2341] mb-4 flex items-center border-b pb-3 text-sm uppercase tracking-wider">
-                <Calendar size={18} className="mr-2 text-[#395D34]" /> Meu Histórico de Embarques
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col flex-1 min-h-[250px] mb-4">
+              <h3 className="font-bold text-[#0B2341] mb-3 flex items-center border-b pb-2 text-sm uppercase tracking-wider shrink-0">
+                <Calendar size={18} className="mr-2 text-[#395D34]" /> Meu Histórico
               </h3>
               
-              <div className="space-y-3 max-h-56 overflow-y-auto pr-1">
+              <div className="space-y-3 overflow-y-auto pr-1 flex-1">
                 {historico.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-6 font-medium">Nenhuma viagem registrada ainda.</p>
                 ) : (
                   historico.map((viagem) => (
-                    <div key={viagem.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100 hover:bg-white transition-colors">
-                      <div className="flex items-center">
-                        <div className={`p-2 rounded-xl mr-3 ${viagem.tipo_viagem === 'ida' ? 'bg-[#395D34]/10 text-[#395D34]' : 'bg-[#0B2341]/10 text-[#0B2341]'}`}>
-                          {viagem.tipo_viagem === 'ida' ? <MapPin size={16} /> : <Bus size={16} />}
+                    <div key={viagem.id} className="flex flex-col p-3 bg-gray-50 rounded-xl border border-gray-100 hover:bg-white transition-colors">
+                      <div className="flex items-center justify-between w-full">
+                        <div className="flex items-center">
+                          <div className={`p-2 rounded-xl mr-3 ${viagem.tipo_viagem === 'ida' ? 'bg-[#395D34]/10 text-[#395D34]' : 'bg-[#0B2341]/10 text-[#0B2341]'}`}>
+                            {viagem.tipo_viagem === 'ida' ? <MapPin size={16} /> : <Bus size={16} />}
+                          </div>
+                          <div>
+                            <p className="text-xs font-black text-gray-800 uppercase tracking-tight">{viagem.tipo_viagem} • {viagem.id_rota_onibus || viagem.id_rota || 'Rota Padrão'}</p>
+                            <p className="text-[10px] text-gray-500 font-medium capitalize mt-0.5">
+                              {viagem.data_hora?.toDate ? viagem.data_hora.toDate().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : 'Data recente'}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-xs font-black text-gray-800 uppercase tracking-tight">{viagem.tipo_viagem} • {viagem.id_rota_onibus || viagem.id_rota || 'Rota Padrão'}</p>
-                          <p className="text-[10px] text-gray-500 font-medium capitalize mt-0.5">
-                            {viagem.data_hora?.toDate ? viagem.data_hora.toDate().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : 'Data recente'}
-                            {viagem.link_maps && (
-                              <a href={viagem.link_maps} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline ml-2">Ver Local</a>
-                            )}
+                        <div className="text-right shrink-0">
+                          <p className="text-xs font-extrabold text-[#0B2341]">
+                            {viagem.data_hora?.toDate ? viagem.data_hora.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
                           </p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-xs font-extrabold text-[#0B2341]">
-                          {viagem.data_hora?.toDate ? viagem.data_hora.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                        </p>
-                      </div>
+                      
+                      {/* BOTÃO PARA ABRIR O LOCAL NO GOOGLE MAPS */}
+                      {viagem.link_maps && (
+                        <div className="mt-2 pl-12">
+                          <a 
+                            href={viagem.link_maps} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="inline-flex items-center text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-colors"
+                          >
+                            <Map size={12} className="mr-1.5" /> Ver Local do Embarque
+                          </a>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
