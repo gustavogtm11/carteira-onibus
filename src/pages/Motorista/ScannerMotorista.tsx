@@ -5,7 +5,7 @@ import { doc, getDoc, collection, addDoc, getDocs, query, where } from 'firebase
 import { db, auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { signOut } from 'firebase/auth';
-import { BusFront, CheckCircle, XCircle, LogOut, ScanLine, AlertTriangle, MapPin, Users, X } from 'lucide-react';
+import { BusFront, CheckCircle, XCircle, LogOut, ScanLine, AlertTriangle, MapPin, Users, X, Clock, Map } from 'lucide-react';
 
 interface EstudanteScan {
   id_estudante: string;
@@ -23,8 +23,7 @@ export default function ScannerMotorista() {
   
   const userAny = user as any;
   const roleStr = String(userAny?.role || '');
-  const isFiscal = roleStr === 'fiscal';
-  const isAdmin = roleStr === 'admin';
+  const isFiscal = roleStr === 'fiscal' || roleStr === 'admin';
   const isMotorista = roleStr === 'motorista';
   const userCpf = userAny?.cpf ? String(userAny.cpf).replace(/\D/g, '') : '';
 
@@ -41,22 +40,24 @@ export default function ScannerMotorista() {
   
   const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
   const [alunosNaRota, setAlunosNaRota] = useState<any[]>([]);
-  const [embarcadosHoje, setEmbarcadosHoje] = useState<Set<string>>(new Set());
+  const [embarcadosHoje, setEmbarcadosHoje] = useState<any[]>([]);
   const [showFaltantes, setShowFaltantes] = useState(false);
+  const [showHistorico, setShowHistorico] = useState(false);
 
-  // Refs para evitar que a câmera reinicie quando esses estados mudarem
   const isProcessingRef = useRef(false);
   const coordsRef = useRef(coords);
   const rotaAtualRef = useRef(rotaAtual);
   const tipoViagemRef = useRef(tipoViagem);
   const horaIdaRef = useRef(horaIda);
   const horaVoltaRef = useRef(horaVolta);
+  const rotasDisponiveisRef = useRef(rotasDisponiveis);
 
   useEffect(() => { coordsRef.current = coords; }, [coords]);
   useEffect(() => { rotaAtualRef.current = rotaAtual; }, [rotaAtual]);
   useEffect(() => { tipoViagemRef.current = tipoViagem; }, [tipoViagem]);
   useEffect(() => { horaIdaRef.current = horaIda; }, [horaIda]);
   useEffect(() => { horaVoltaRef.current = horaVolta; }, [horaVolta]);
+  useEffect(() => { rotasDisponiveisRef.current = rotasDisponiveis; }, [rotasDisponiveis]);
 
   useEffect(() => {
     localStorage.setItem('horaIda', horaIda);
@@ -78,7 +79,7 @@ export default function ScannerMotorista() {
       if (!user) return;
       try {
         let q;
-        if (isFiscal || isAdmin) {
+        if (isFiscal) {
           q = collection(db, 'rotas');
         } else if (userCpf) {
           q = query(collection(db, 'rotas'), where('motorista_cpf', '==', userCpf));
@@ -101,7 +102,7 @@ export default function ScannerMotorista() {
       }
     };
     buscarRotas();
-  }, [user, isFiscal, isAdmin, isMotorista, userCpf]);
+  }, [user, isFiscal, isMotorista, userCpf]);
 
   useEffect(() => {
     const carregarControleDeEmbarque = async () => {
@@ -127,10 +128,10 @@ export default function ScannerMotorista() {
         );
         const snapHist = await getDocs(qHist);
         
-        const idsEmbarcados = new Set<string>(snapHist.docs.map(d => d.data().id_estudante));
-        setEmbarcadosHoje(idsEmbarcados);
+        const historicoHoje = snapHist.docs.map(d => ({ id: d.id, ...d.data() }));
+        setEmbarcadosHoje(historicoHoje);
       } catch (error) {
-        console.error("Erro ao carregar lista de faltantes:", error);
+        console.error("Erro ao carregar controle:", error);
       }
     };
     carregarControleDeEmbarque();
@@ -142,7 +143,7 @@ export default function ScannerMotorista() {
       linkMaps = `https://www.google.com/maps?q=${coordsRef.current.lat},${coordsRef.current.lng}`;
     }
 
-    await addDoc(collection(db, 'historico_viagens'), {
+    const novoEmbarque = {
       id_estudante: dadosEstudante.id_estudante,
       nome_estudante: dadosEstudante.nome,
       id_motorista: user?.uid || '',
@@ -154,9 +155,14 @@ export default function ScannerMotorista() {
       acesso_universal: !isExata,
       autorizado_por_fiscal: isFiscal,
       link_maps: linkMaps
-    });
+    };
 
-    setEmbarcadosHoje(prev => new Set(prev).add(dadosEstudante.id_estudante));
+    try {
+      const docRef = await addDoc(collection(db, 'historico_viagens'), novoEmbarque);
+      setEmbarcadosHoje(prev => [{ id: docRef.id, ...novoEmbarque }, ...prev]);
+    } catch (e) {
+      console.error("Erro ao salvar histórico", e);
+    }
 
     setEstudante({
       id_estudante: dadosEstudante.id_estudante,
@@ -183,7 +189,7 @@ export default function ScannerMotorista() {
   useEffect(() => {
     const readerId = "qr-reader-container";
     const html5QrCode = new Html5Qrcode(readerId);
-    const config = { fps: 10, qrbox: { width: 220, height: 220 } };
+    const config = { fps: 10, qrbox: { width: 180, height: 180 } };
 
     const isHorarioProximo = (horarioAlvo: string, margemMinutos: number) => {
       if (!horarioAlvo) return false;
@@ -230,7 +236,9 @@ export default function ScannerMotorista() {
 
           const rotaAlunoLimpa = String(dadosEstudante.rota || '').trim().toLowerCase();
           const rotaAtualLimpa = String(rotaAtualRef.current || '').trim().toLowerCase();
-          const isRotaExata = rotaAlunoLimpa === rotaAtualLimpa;
+          const listaRotasMotorista = rotasDisponiveisRef.current.map(r => r.trim().toLowerCase());
+          
+          const isRotaExata = isFiscal || rotaAlunoLimpa === rotaAtualLimpa || listaRotasMotorista.includes(rotaAlunoLimpa);
 
           if (isRotaExata) {
             await registrarViagem(dadosEstudante, sentidoCalculado, true);
@@ -250,7 +258,6 @@ export default function ScannerMotorista() {
       }
     };
 
-    // Inicializa a câmera UMA vez, não importando se o GPS mudar.
     html5QrCode.start(
       { facingMode: "environment" },
       config,
@@ -273,9 +280,7 @@ export default function ScannerMotorista() {
         html5QrCode.clear();
       }
     };
-    // Array vazio no useEffect garante que a câmera não pisque. As validações usam as Refs atualizadas.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const confirmarEmbarque = async () => {
     if (!estudantePendente) return;
@@ -295,7 +300,8 @@ export default function ScannerMotorista() {
     }, 2000);
   };
 
-  const alunosFaltantes = alunosNaRota.filter(a => !embarcadosHoje.has(a.id_estudante));
+  const idsEmbarcados = new Set(embarcadosHoje.map(e => e.id_estudante));
+  const alunosFaltantes = alunosNaRota.filter(a => !idsEmbarcados.has(a.id_estudante));
 
   return (
     <div className="h-[100dvh] w-full bg-gray-50 text-gray-800 flex flex-col font-sans overflow-hidden">
@@ -310,15 +316,18 @@ export default function ScannerMotorista() {
             </p>
           </div>
         </div>
-        <button onClick={() => signOut(auth)} className="text-white/80 p-2 hover:bg-[#890013] hover:text-white rounded-full transition-colors">
-          <LogOut size={20} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setShowHistorico(true)} className="text-white/80 p-2 hover:bg-[#395D34] hover:text-white rounded-full transition-colors" title="Histórico da Rota">
+            <Clock size={20} />
+          </button>
+          <button onClick={() => signOut(auth)} className="text-white/80 p-2 hover:bg-[#890013] hover:text-white rounded-full transition-colors" title="Sair">
+            <LogOut size={20} />
+          </button>
+        </div>
       </nav>
 
       <div className="flex-1 flex flex-col w-full relative">
-        
         <div className="shrink-0 bg-white px-4 pt-3 pb-2 shadow-sm z-10 border-b border-gray-200 flex flex-col gap-2">
-          
           <div className="flex gap-2">
             <div className="flex-1">
               <select 
@@ -338,7 +347,6 @@ export default function ScannerMotorista() {
             </button>
           </div>
 
-          {/* Botões Ida/Volta e Inputs de Horário súper compactos */}
           <div className="flex gap-2 items-center h-9">
             <div className="flex gap-1 flex-1 h-full">
               <button onClick={() => setTipoViagem('ida')} className={`flex-1 rounded-lg font-bold transition-all text-xs border ${tipoViagem === 'ida' ? 'bg-[#395D34] border-[#395D34] text-white shadow-inner' : 'bg-white border-gray-300 text-gray-500'}`}>IDA</button>
@@ -352,7 +360,7 @@ export default function ScannerMotorista() {
         </div>
 
         <div className="flex-1 bg-black relative flex flex-col justify-center items-center overflow-hidden w-full h-full">
-          <div id="qr-reader-container" className="w-full max-h-[50vh] object-cover flex items-center justify-center"></div>
+          <div id="qr-reader-container" className="w-full h-full max-h-[50vh] flex items-center justify-center"></div>
 
           {status === 'loading' && (
             <div className="absolute inset-0 bg-[#0B2341]/90 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
@@ -421,26 +429,18 @@ export default function ScannerMotorista() {
         </div>
       </div>
 
+      {/* MODAL FALTANTES */}
       {showFaltantes && (
-        <div 
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
-          onClick={() => setShowFaltantes(false)}
-        >
-          <div 
-            className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="bg-orange-50 p-4 flex items-center justify-between border-b border-orange-200">
+        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setShowFaltantes(false)}>
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+            <div className="bg-orange-50 p-4 flex items-center justify-between border-b border-orange-200 shrink-0">
               <div className="flex items-center text-orange-800">
                 <Users size={20} className="mr-2" />
-                <h3 className="font-bold">Faltam Embarcar ({alunosFaltantes.length})</h3>
+                <h3 className="font-bold text-sm">Faltam Embarcar na {tipoViagem} ({alunosFaltantes.length})</h3>
               </div>
-              <button onClick={() => setShowFaltantes(false)} className="text-orange-800/60 hover:text-orange-900 p-1">
-                <X size={20} />
-              </button>
+              <button onClick={() => setShowFaltantes(false)} className="text-orange-800/60 hover:text-orange-900 p-1"><X size={20} /></button>
             </div>
-            
-            <div className="p-0 overflow-y-auto flex-1">
+            <div className="p-0 overflow-y-auto flex-1 bg-gray-50">
               {alunosFaltantes.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
                   <CheckCircle size={40} className="mx-auto mb-2 opacity-30 text-green-500" />
@@ -449,19 +449,58 @@ export default function ScannerMotorista() {
               ) : (
                 <ul className="divide-y divide-gray-100">
                   {alunosFaltantes.map(aluno => (
-                    <li key={aluno.id_estudante || Math.random().toString()} className="p-3 flex items-center hover:bg-gray-50 transition">
+                    <li key={aluno.id_estudante || Math.random().toString()} className="p-3 flex items-center bg-white hover:bg-gray-50 transition">
                       <div className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden mr-3 shrink-0">
-                        {aluno.foto_url ? (
-                          <img src={aluno.foto_url} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400"><Users size={16}/></div>
-                        )}
+                        {aluno.foto_url ? <img src={aluno.foto_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400"><Users size={16}/></div>}
                       </div>
                       <div className="flex-1 overflow-hidden">
                         <p className="text-sm font-bold text-[#0B2341] truncate leading-tight">{aluno.nome}</p>
                         <p className="text-[10px] text-gray-500 font-medium truncate flex items-center mt-0.5">
-                          <MapPin size={10} className="mr-1"/> {aluno.instituicao_destino || 'Sem Instituição'}
+                          <MapPin size={10} className="mr-1 text-gray-400"/> {aluno.instituicao_destino || 'Sem Instituição'}
                         </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL HISTÓRICO DE HOJE COM LOCALIZAÇÃO */}
+      {showHistorico && (
+        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setShowHistorico(false)}>
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+            <div className="bg-[#0B2341] p-4 flex items-center justify-between border-b shrink-0">
+              <div className="flex items-center text-white">
+                <Clock size={20} className="mr-2" />
+                <h3 className="font-bold text-sm">Últimos Embarques ({embarcadosHoje.length})</h3>
+              </div>
+              <button onClick={() => setShowHistorico(false)} className="text-white/60 hover:text-white p-1"><X size={20} /></button>
+            </div>
+            <div className="p-0 overflow-y-auto flex-1 bg-gray-50">
+              {embarcadosHoje.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">
+                  <p className="text-sm font-medium">Nenhum aluno embarcou ainda.</p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {embarcadosHoje.map(registro => (
+                    <li key={registro.id || Math.random().toString()} className="p-3 flex flex-col bg-white">
+                      <div className="flex justify-between items-start mb-2">
+                        <p className="text-sm font-bold text-[#0B2341] truncate leading-tight flex-1 mr-2">{registro.nome_estudante}</p>
+                        <span className="text-[10px] font-black text-gray-400 bg-gray-100 px-2 py-0.5 rounded shrink-0">
+                          {registro.data_hora?.toDate ? registro.data_hora.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-medium text-gray-500 uppercase">{registro.tipo_viagem}</span>
+                        {registro.link_maps && (
+                          <a href={registro.link_maps} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors">
+                            <Map size={12} className="mr-1" /> Ver Local
+                          </a>
+                        )}
                       </div>
                     </li>
                   ))}
