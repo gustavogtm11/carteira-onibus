@@ -30,7 +30,6 @@ export default function ScannerMotorista() {
 
   const [rotasDisponiveis, setRotasDisponiveis] = useState<string[]>([]);
   const [rotaAtual, setRotaAtual] = useState('');
-  
   const [tipoViagem, setTipoViagem] = useState<'ida' | 'volta'>('ida');
   const [horaIda, setHoraIda] = useState(localStorage.getItem('horaIda') || '06:00');
   const [horaVolta, setHoraVolta] = useState(localStorage.getItem('horaVolta') || '12:00');
@@ -40,17 +39,32 @@ export default function ScannerMotorista() {
   const [mensagem, setMensagem] = useState('');
   const [estudantePendente, setEstudantePendente] = useState<{ dados: any, sentido: 'ida' | 'volta' } | null>(null);
   
-  // Localização e Controle de Faltantes
   const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
   const [alunosNaRota, setAlunosNaRota] = useState<any[]>([]);
   const [embarcadosHoje, setEmbarcadosHoje] = useState<Set<string>>(new Set());
   const [showFaltantes, setShowFaltantes] = useState(false);
 
+  // Refs para evitar que a câmera reinicie quando esses estados mudarem
   const isProcessingRef = useRef(false);
-  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const coordsRef = useRef(coords);
+  const rotaAtualRef = useRef(rotaAtual);
+  const tipoViagemRef = useRef(tipoViagem);
+  const horaIdaRef = useRef(horaIda);
+  const horaVoltaRef = useRef(horaVolta);
 
-  // Monitorar GPS continuamente para maior precisão na hora do scan
+  useEffect(() => { coordsRef.current = coords; }, [coords]);
+  useEffect(() => { rotaAtualRef.current = rotaAtual; }, [rotaAtual]);
+  useEffect(() => { tipoViagemRef.current = tipoViagem; }, [tipoViagem]);
+  useEffect(() => { horaIdaRef.current = horaIda; }, [horaIda]);
+  useEffect(() => { horaVoltaRef.current = horaVolta; }, [horaVolta]);
+
   useEffect(() => {
+    localStorage.setItem('horaIda', horaIda);
+    localStorage.setItem('horaVolta', horaVolta);
+  }, [horaIda, horaVolta]);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
     const watchId = navigator.geolocation.watchPosition(
       (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       (err) => console.warn("Aviso de GPS:", err),
@@ -60,17 +74,10 @@ export default function ScannerMotorista() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('horaIda', horaIda);
-    localStorage.setItem('horaVolta', horaVolta);
-  }, [horaIda, horaVolta]);
-
-  // Busca de rotas
-  useEffect(() => {
     const buscarRotas = async () => {
       if (!user) return;
       try {
         let q;
-        // Fiscal e Admin veem todas as rotas, Motorista apenas as dele
         if (isFiscal || isAdmin) {
           q = collection(db, 'rotas');
         } else if (userCpf) {
@@ -82,7 +89,6 @@ export default function ScannerMotorista() {
         const snap = await getDocs(q);
         let lista = snap.docs.map(d => d.data().nome_rota as string);
         
-        // Fallback para legado
         if (lista.length === 0 && isMotorista && user.email) {
           const snapLegado = await getDocs(query(collection(db, 'rotas'), where('motorista_email', '==', user.email)));
           lista = snapLegado.docs.map(d => d.data().nome_rota as string);
@@ -97,22 +103,19 @@ export default function ScannerMotorista() {
     buscarRotas();
   }, [user, isFiscal, isAdmin, isMotorista, userCpf]);
 
-  // Buscar alunos da rota atual e quem já embarcou hoje
   useEffect(() => {
     const carregarControleDeEmbarque = async () => {
       if (!rotaAtual) return;
       try {
-        // 1. Busca TODOS os estudantes (filtramos localmente para evitar erros de maiúscula/minúscula)
         const snapEstudantes = await getDocs(collection(db, 'estudantes'));
         const rotaLimpa = rotaAtual.trim().toLowerCase();
         
         const alunosFiltrados = snapEstudantes.docs
-          .map(d => ({ ...d.data(), id: d.id }))
+          .map(d => d.data())
           .filter((a: any) => String(a.rota || '').trim().toLowerCase() === rotaLimpa);
         
         setAlunosNaRota(alunosFiltrados);
 
-        // 2. Busca histórico de hoje para a rota e sentido (Ida ou Volta)
         const hoje = new Date();
         hoje.setHours(0, 0, 0, 0);
         
@@ -124,30 +127,19 @@ export default function ScannerMotorista() {
         );
         const snapHist = await getDocs(qHist);
         
-        const idsEmbarcados = new Set(snapHist.docs.map(d => d.data().id_estudante));
+        const idsEmbarcados = new Set<string>(snapHist.docs.map(d => d.data().id_estudante));
         setEmbarcadosHoje(idsEmbarcados);
       } catch (error) {
         console.error("Erro ao carregar lista de faltantes:", error);
       }
     };
-    
     carregarControleDeEmbarque();
   }, [rotaAtual, tipoViagem]);
 
-  const isHorarioProximo = (horarioAlvo: string, margemMinutos: number) => {
-    if (!horarioAlvo) return false;
-    const [hora, min] = horarioAlvo.split(':').map(Number);
-    const agora = new Date();
-    const alvo = new Date();
-    alvo.setHours(hora, min, 0, 0);
-    const diffEmMinutos = Math.abs(agora.getTime() - alvo.getTime()) / (1000 * 60);
-    return diffEmMinutos <= margemMinutos;
-  };
-
   const registrarViagem = async (dadosEstudante: any, sentido: 'ida' | 'volta', isExata: boolean) => {
     let linkMaps = '';
-    if (coords) {
-      linkMaps = `https://www.google.com/maps?q=${coords.lat},${coords.lng}`;
+    if (coordsRef.current) {
+      linkMaps = `https://www.google.com/maps?q=${coordsRef.current.lat},${coordsRef.current.lng}`;
     }
 
     await addDoc(collection(db, 'historico_viagens'), {
@@ -155,7 +147,7 @@ export default function ScannerMotorista() {
       nome_estudante: dadosEstudante.nome,
       id_motorista: user?.uid || '',
       nome_motorista: userAny?.nome || user?.email || '',
-      id_rota_onibus: rotaAtual, 
+      id_rota_onibus: rotaAtualRef.current, 
       rota_original_aluno: dadosEstudante.rota, 
       tipo_viagem: sentido,
       data_hora: new Date(),
@@ -164,7 +156,6 @@ export default function ScannerMotorista() {
       link_maps: linkMaps
     });
 
-    // Atualiza a lista de embarcados na tela instantaneamente
     setEmbarcadosHoje(prev => new Set(prev).add(dadosEstudante.id_estudante));
 
     setEstudante({
@@ -192,10 +183,17 @@ export default function ScannerMotorista() {
   useEffect(() => {
     const readerId = "qr-reader-container";
     const html5QrCode = new Html5Qrcode(readerId);
-    html5QrCodeRef.current = html5QrCode;
-
-    // Configuração para deixar o leitor um pouco menor e processar rápido
     const config = { fps: 10, qrbox: { width: 220, height: 220 } };
+
+    const isHorarioProximo = (horarioAlvo: string, margemMinutos: number) => {
+      if (!horarioAlvo) return false;
+      const [hora, min] = horarioAlvo.split(':').map(Number);
+      const agora = new Date();
+      const alvo = new Date();
+      alvo.setHours(hora, min, 0, 0);
+      const diffEmMinutos = Math.abs(agora.getTime() - alvo.getTime()) / (1000 * 60);
+      return diffEmMinutos <= margemMinutos;
+    };
 
     const qrCodeSuccessCallback = async (decodedText: string) => {
       if (isProcessingRef.current) return;
@@ -224,14 +222,14 @@ export default function ScannerMotorista() {
             return;
           }
 
-          let sentidoCalculado = tipoViagem;
-          if (isHorarioProximo(horaIda, 45)) sentidoCalculado = 'ida';
-          else if (isHorarioProximo(horaVolta, 45)) sentidoCalculado = 'volta';
+          let sentidoCalculado = tipoViagemRef.current;
+          if (isHorarioProximo(horaIdaRef.current, 45)) sentidoCalculado = 'ida';
+          else if (isHorarioProximo(horaVoltaRef.current, 45)) sentidoCalculado = 'volta';
+          
           setTipoViagem(sentidoCalculado);
 
-          // Validação super restrita limpando os textos
           const rotaAlunoLimpa = String(dadosEstudante.rota || '').trim().toLowerCase();
-          const rotaAtualLimpa = String(rotaAtual || '').trim().toLowerCase();
+          const rotaAtualLimpa = String(rotaAtualRef.current || '').trim().toLowerCase();
           const isRotaExata = rotaAlunoLimpa === rotaAtualLimpa;
 
           if (isRotaExata) {
@@ -252,27 +250,32 @@ export default function ScannerMotorista() {
       }
     };
 
+    // Inicializa a câmera UMA vez, não importando se o GPS mudar.
     html5QrCode.start(
       { facingMode: "environment" },
       config,
       qrCodeSuccessCallback,
-      () => {}
+      undefined
     ).catch((err) => {
       console.warn("Câmera traseira falhou, usando a padrão...", err);
       html5QrCode.start(
         { facingMode: "user" },
         config,
         qrCodeSuccessCallback,
-        () => {}
+        undefined
       ).catch(e => console.error("Erro crítico ao abrir câmera:", e));
     });
 
     return () => {
-      if (html5QrCode && html5QrCode.isScanning) {
-        html5QrCode.stop().then(() => html5QrCode.clear()).catch(console.error);
+      if (html5QrCode.isScanning) {
+        html5QrCode.stop().then(() => html5QrCode.clear()).catch(() => html5QrCode.clear());
+      } else {
+        html5QrCode.clear();
       }
     };
-  }, [rotaAtual, horaIda, horaVolta, tipoViagem, coords]);
+    // Array vazio no useEffect garante que a câmera não pisque. As validações usam as Refs atualizadas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const confirmarEmbarque = async () => {
     if (!estudantePendente) return;
@@ -297,7 +300,6 @@ export default function ScannerMotorista() {
   return (
     <div className="h-[100dvh] w-full bg-gray-50 text-gray-800 flex flex-col font-sans overflow-hidden">
       
-      {/* Navbar Fixa e Compacta */}
       <nav className="shrink-0 bg-[#0B2341] text-white px-4 py-3 flex justify-between items-center shadow-md z-10">
         <div className="flex items-center">
           <div className="bg-white/10 p-1.5 rounded-lg mr-2.5"><BusFront size={20} className="text-white" /></div>
@@ -315,7 +317,6 @@ export default function ScannerMotorista() {
 
       <div className="flex-1 flex flex-col w-full relative">
         
-        {/* Painel de Controles no topo (Mais compacto) */}
         <div className="shrink-0 bg-white px-4 pt-3 pb-2 shadow-sm z-10 border-b border-gray-200 flex flex-col gap-2">
           
           <div className="flex gap-2">
@@ -328,8 +329,6 @@ export default function ScannerMotorista() {
                 {rotasDisponiveis.length === 0 ? <option value="">Sem rotas</option> : rotasDisponiveis.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
-
-            {/* Botão de Faltantes */}
             <button 
               onClick={() => setShowFaltantes(true)}
               className="bg-orange-50 border border-orange-200 text-orange-700 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 shadow-sm active:bg-orange-100"
@@ -339,22 +338,22 @@ export default function ScannerMotorista() {
             </button>
           </div>
 
-          <div className="flex gap-2 h-9">
-            <button onClick={() => setTipoViagem('ida')} className={`flex-1 rounded-lg font-bold transition-all text-xs border ${tipoViagem === 'ida' ? 'bg-[#395D34] border-[#395D34] text-white shadow-inner' : 'bg-white border-gray-300 text-gray-500'}`}>
-              IDA
-            </button>
-            <button onClick={() => setTipoViagem('volta')} className={`flex-1 rounded-lg font-bold transition-all text-xs border ${tipoViagem === 'volta' ? 'bg-[#0B2341] border-[#0B2341] text-white shadow-inner' : 'bg-white border-gray-300 text-gray-500'}`}>
-              VOLTA
-            </button>
+          {/* Botões Ida/Volta e Inputs de Horário súper compactos */}
+          <div className="flex gap-2 items-center h-9">
+            <div className="flex gap-1 flex-1 h-full">
+              <button onClick={() => setTipoViagem('ida')} className={`flex-1 rounded-lg font-bold transition-all text-xs border ${tipoViagem === 'ida' ? 'bg-[#395D34] border-[#395D34] text-white shadow-inner' : 'bg-white border-gray-300 text-gray-500'}`}>IDA</button>
+              <button onClick={() => setTipoViagem('volta')} className={`flex-1 rounded-lg font-bold transition-all text-xs border ${tipoViagem === 'volta' ? 'bg-[#0B2341] border-[#0B2341] text-white shadow-inner' : 'bg-white border-gray-300 text-gray-500'}`}>VOLTA</button>
+            </div>
+            <div className="flex gap-1 shrink-0 h-full">
+              <input type="time" value={horaIda} onChange={e => setHoraIda(e.target.value)} title="Auto-Ida" className="w-[72px] bg-gray-50 border border-gray-300 rounded-lg text-[10px] font-bold text-[#0B2341] outline-none text-center px-1" />
+              <input type="time" value={horaVolta} onChange={e => setHoraVolta(e.target.value)} title="Auto-Volta" className="w-[72px] bg-gray-50 border border-gray-300 rounded-lg text-[10px] font-bold text-[#0B2341] outline-none text-center px-1" />
+            </div>
           </div>
         </div>
 
-        {/* Área da Câmera Flexível */}
         <div className="flex-1 bg-black relative flex flex-col justify-center items-center overflow-hidden w-full h-full">
-          
           <div id="qr-reader-container" className="w-full max-h-[50vh] object-cover flex items-center justify-center"></div>
 
-          {/* Overlays de Status cobrindo a câmera inteira se necessário */}
           {status === 'loading' && (
             <div className="absolute inset-0 bg-[#0B2341]/90 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
               <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin mb-2"></div>
@@ -362,7 +361,6 @@ export default function ScannerMotorista() {
             </div>
           )}
 
-          {/* Modal: Confirmação de Rota Diferente */}
           {status === 'confirmacao' && estudantePendente && (
             <div className="absolute inset-0 bg-yellow-500 text-gray-900 flex flex-col items-center justify-center p-6 z-30">
               <AlertTriangle size={40} className="mb-2 text-yellow-900 animate-pulse" />
@@ -379,7 +377,6 @@ export default function ScannerMotorista() {
             </div>
           )}
 
-          {/* Cards flutuantes de Resultado */}
           {status === 'success' && estudante && (
             <div className="absolute inset-x-4 bottom-8 bg-[#395D34] text-white p-3 rounded-xl shadow-2xl flex items-center z-30 animate-in fade-in slide-in-from-bottom-5 border-2 border-white/20">
               <img src={estudante.foto_url} alt="Foto" className="w-12 h-12 rounded-lg object-cover mr-3 shrink-0 bg-white" />
@@ -422,18 +419,16 @@ export default function ScannerMotorista() {
             </div>
           )}
         </div>
-
       </div>
 
-      {/* JANELINHA FLUTUANTE DE ALUNOS FALTANTES */}
       {showFaltantes && (
         <div 
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
-          onClick={() => setShowFaltantes(false)} // Fecha ao clicar fora
+          onClick={() => setShowFaltantes(false)}
         >
           <div 
             className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95"
-            onClick={(e) => e.stopPropagation()} // Previne fechar ao clicar dentro
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-orange-50 p-4 flex items-center justify-between border-b border-orange-200">
               <div className="flex items-center text-orange-800">
@@ -454,7 +449,7 @@ export default function ScannerMotorista() {
               ) : (
                 <ul className="divide-y divide-gray-100">
                   {alunosFaltantes.map(aluno => (
-                    <li key={aluno.id} className="p-3 flex items-center hover:bg-gray-50 transition">
+                    <li key={aluno.id_estudante || Math.random().toString()} className="p-3 flex items-center hover:bg-gray-50 transition">
                       <div className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden mr-3 shrink-0">
                         {aluno.foto_url ? (
                           <img src={aluno.foto_url} alt="" className="w-full h-full object-cover" />
