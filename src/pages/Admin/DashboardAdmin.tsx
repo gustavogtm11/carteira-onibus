@@ -37,7 +37,7 @@ export default function DashboardAdmin() {
   const [rotas, setRotas] = useState<Rota[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Filtra apenas os motoristas para o select de rotas
+  // Filtra apenas os motoristas/fiscais para o select de rotas
   const motoristas = usuarios.filter(u => u.role === 'motorista');
 
   // Carregamentos
@@ -82,10 +82,19 @@ export default function DashboardAdmin() {
     e.preventDefault();
     if (!emailNovo || !cpfNovo) return;
     setLoading(true);
+    
     try {
-      const cpfLimpo = cpfNovo.replace(/\D/g, '');
+      // AJUSTE CRÍTICO DE LOGIN: Limpeza total de formatação de CPF e E-mail
+      const cpfLimpo = cpfNovo.replace(/\D/g, ''); // Garante que só vai número para o banco
+      const emailLimpo = emailNovo.trim().toLowerCase(); // Evita erros de espaço ou letras maiúsculas no login
       
-      await setDoc(doc(db, 'usuarios_autorizados', emailNovo.toLowerCase()), {
+      if (cpfLimpo.length !== 11) {
+        showAlert('Por favor, informe um CPF válido com 11 dígitos.', 'error');
+        setLoading(false);
+        return;
+      }
+
+      await setDoc(doc(db, 'usuarios_autorizados', emailLimpo), {
         role: roleNovo,
         cpf: cpfLimpo,
         atualizadoEm: new Date()
@@ -134,7 +143,7 @@ export default function DashboardAdmin() {
   const handleCadastrarRota = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nomeRotaNova || !motoristaSelecionado) {
-      return showAlert('Por favor, selecione um motorista e digite o nome da rota/instituição.', 'info');
+      return showAlert('Por favor, selecione um motorista/fiscal e digite o nome da rota.', 'info');
     }
     
     setLoading(true);
@@ -147,7 +156,7 @@ export default function DashboardAdmin() {
       });
       setNomeRotaNova('');
       carregarRotas();
-      showAlert('Rota atribuída ao motorista com sucesso!', 'success');
+      showAlert('Rota atribuída ao motorista/fiscal com sucesso!', 'success');
     } catch (err) {
       console.error(err);
       showAlert('Erro ao cadastrar rota.', 'error');
@@ -199,7 +208,7 @@ export default function DashboardAdmin() {
             onClick={() => setActiveTab('rotas')}
             className={`flex items-center px-5 py-3 rounded-t-lg font-bold transition text-sm ${activeTab === 'rotas' ? 'bg-white border-t border-l border-r border-gray-300 text-[#0B2341]' : 'bg-transparent text-gray-500 hover:text-gray-700'}`}
           >
-            <Map size={18} className="mr-2" /> Rotas por Motorista
+            <Map size={18} className="mr-2" /> Rotas por Motorista/Fiscal
           </button>
         </div>
 
@@ -241,9 +250,15 @@ export default function DashboardAdmin() {
                     required 
                     placeholder="Apenas números" 
                     value={cpfNovo} 
-                    onChange={e => setCpfNovo(e.target.value)} 
+                    onChange={e => {
+                      // Máscara visual simples no input (apenas números)
+                      const onlyNums = e.target.value.replace(/\D/g, '');
+                      setCpfNovo(onlyNums);
+                    }} 
+                    maxLength={11}
                     className="block w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#395D34] focus:ring-[#395D34] bg-gray-50 outline-none" 
                   />
+                  <p className="text-[10px] text-gray-500 mt-1">Digite apenas os números do CPF.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-[#0B2341] mb-1">Cargo / Função</label>
@@ -314,24 +329,24 @@ export default function DashboardAdmin() {
             
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit">
               <h2 className="text-lg font-bold text-[#0B2341] mb-6 flex items-center border-b pb-3">
-                <PlusCircle size={20} className="mr-2 text-[#395D34]" /> Atribuir Rota ao Motorista
+                <PlusCircle size={20} className="mr-2 text-[#395D34]" /> Atribuir Rota
               </h2>
               
               {motoristas.length === 0 ? (
                 <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl text-sm font-medium">
-                  Você precisa cadastrar um <strong>Motorista</strong> na aba de Funcionários antes de criar rotas.
+                  Você precisa cadastrar um <strong>Motorista/Fiscal</strong> na aba de Funcionários antes de criar rotas.
                 </div>
               ) : (
                 <form onSubmit={handleCadastrarRota} className="space-y-4">
                   <div>
-                    <label className="block text-sm font-semibold text-[#0B2341] mb-1">Selecione o Motorista</label>
+                    <label className="block text-sm font-semibold text-[#0B2341] mb-1">Selecione o Motorista/Fiscal</label>
                     <select 
                       required 
                       value={motoristaSelecionado} 
                       onChange={e => setMotoristaSelecionado(e.target.value)} 
                       className="block w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#395D34] focus:ring-[#395D34] bg-gray-50 outline-none"
                     >
-                      <option value="">Escolha um motorista...</option>
+                      <option value="">Escolha um responsável...</option>
                       {motoristas.map(m => (
                         <option key={m.email} value={m.email}>{m.email}</option>
                       ))}

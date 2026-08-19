@@ -1,7 +1,7 @@
 // src/pages/Estudante/CarteiraDigital.tsx
 import { useState, useEffect } from 'react';
 import QRCode from 'react-qr-code';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -54,16 +54,34 @@ export default function CarteiraDigital() {
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
         
-        if (userSnap.exists() && userSnap.data().id_estudante) {
-          const idEstudante = userSnap.data().id_estudante;
-          
-          const estudanteRef = doc(db, 'estudantes', idEstudante);
+        let cpfEstudante = '';
+
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          cpfEstudante = userData.id_estudante || userData.cpf;
+        }
+
+        if (cpfEstudante) {
+          const cpfLimpo = cpfEstudante.replace(/\D/g, '');
+          const estudanteRef = doc(db, 'estudantes', cpfLimpo);
           const estudanteSnap = await getDoc(estudanteRef);
           
           if (estudanteSnap.exists()) {
             const dadosAluno = estudanteSnap.data() as EstudanteDados;
             setEstudante(dadosAluno);
-            buscarHistorico(idEstudante);
+
+            // CORREÇÃO: Utiliza setDoc com merge para evitar o erro "No document to update"
+            await setDoc(userRef, {
+              uid: user.uid,
+              email: user.email,
+              nome: dadosAluno.nome,
+              role: 'estudante',
+              cpf: dadosAluno.cpf,
+              id_estudante: cpfLimpo,
+              atualizadoEm: new Date()
+            }, { merge: true });
+
+            buscarHistorico(cpfLimpo);
             buscarWhatsappDaRota(dadosAluno.rota);
           }
         }
@@ -76,7 +94,6 @@ export default function CarteiraDigital() {
     buscarDados();
   }, [user]);
 
-  // Busca o link do WhatsApp cadastrado na rota do aluno
   const buscarWhatsappDaRota = async (nomeRota: string) => {
     if (!nomeRota) return;
     try {
@@ -120,7 +137,6 @@ export default function CarteiraDigital() {
     }
   };
 
-  // Formatação automática do CPF ao digitar
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, '');
     if (value.length > 11) value = value.slice(0, 11);
@@ -148,9 +164,18 @@ export default function CarteiraDigital() {
       
       if (estudanteSnap.exists()) {
         const dadosAluno = estudanteSnap.data() as EstudanteDados;
-        await updateDoc(doc(db, 'users', user.uid), {
-          id_estudante: cpfLimpo
-        });
+        
+        // CORREÇÃO: Utiliza setDoc com merge para criar ou atualizar o documento do usuário com segurança[cite: 16]
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          email: user.email,
+          nome: dadosAluno.nome,
+          role: 'estudante',
+          cpf: dadosAluno.cpf,
+          id_estudante: cpfLimpo,
+          atualizadoEm: new Date()
+        }, { merge: true });
+
         setEstudante(dadosAluno);
         buscarHistorico(cpfLimpo);
         buscarWhatsappDaRota(dadosAluno.rota);
@@ -192,7 +217,6 @@ export default function CarteiraDigital() {
     }
   };
 
-  // Verificação de Vencimento
   const verificarVencimento = () => {
     if (!estudante?.data_vencimento) return false;
     const hoje = new Date();
@@ -213,7 +237,6 @@ export default function CarteiraDigital() {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col font-sans">
       
-      {/* Navbar */}
       <nav className="bg-[#0B2341] text-white p-4 flex justify-between items-center shadow-md">
         <div className="flex items-center">
           <Bus size={22} className="mr-2 text-[#395D34]" />
@@ -226,7 +249,6 @@ export default function CarteiraDigital() {
 
       <div className="flex-1 p-4 max-w-md mx-auto w-full flex flex-col gap-6">
         
-        {/* Tela de Vínculo Inicial */}
         {!estudante ? (
           <div className="bg-white p-6 rounded-2xl shadow-md mt-10 border border-gray-200">
             <h2 className="text-xl font-bold text-[#0B2341] mb-2">Bem-vindo(a)!</h2>
@@ -252,13 +274,10 @@ export default function CarteiraDigital() {
             </form>
           </div>
         ) : (
-          
-          /* Carteira Digital Interativa 3D (Fundo Claro Ajustado) */
           <>
             <div className="text-center mt-2">
               <p className="text-gray-400 text-xs mb-2 uppercase font-semibold tracking-wider">Toque no cartão para girar</p>
               
-              {/* Aviso de Carteira Vencida */}
               {estaVencido && (
                 <div className="mb-4 bg-[#890013] text-white p-3 rounded-xl shadow-lg border border-red-700 flex items-center justify-center animate-in fade-in slide-in-from-top-2">
                   <AlertOctagon size={20} className="mr-2 shrink-0" />
@@ -279,12 +298,10 @@ export default function CarteiraDigital() {
                   }}
                 >
                   
-                  {/* FRENTE DO CARTÃO (CLARA E LEGÍVEL) */}
                   <div 
                     className={`absolute w-full h-full bg-gradient-to-br from-white via-gray-50 to-blue-50/50 rounded-2xl p-5 flex flex-col justify-between text-gray-800 overflow-hidden border-2 shadow-xl ${estaVencido ? 'border-[#890013]' : 'border-[#0B2341]/30'}`}
                     style={{ backfaceVisibility: 'hidden' }}
                   >
-                    {/* Marca d'água com Logo da Prefeitura bem visível */}
                     <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
                       <img src="/logo-prefeitura.png" alt="Marca D'água" className="w-2/3 object-contain" />
                     </div>
@@ -329,7 +346,6 @@ export default function CarteiraDigital() {
                     </div>
                   </div>
 
-                  {/* VERSO DO CARTÃO (QR CODE) */}
                   <div 
                     className="absolute w-full h-full bg-white rounded-2xl p-5 flex flex-col justify-between border-2 border-gray-200 shadow-xl text-gray-800"
                     style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
@@ -368,7 +384,6 @@ export default function CarteiraDigital() {
                 </div>
               </div>
 
-              {/* Botão para entrar no Grupo do WhatsApp do Ônibus */}
               {whatsappRota && (
                 <a 
                   href={whatsappRota} 
@@ -380,7 +395,6 @@ export default function CarteiraDigital() {
                 </a>
               )}
 
-              {/* Botão para Salvar na Carteira */}
               <button 
                 onClick={handleSalvarCarteira}
                 className="mt-3 w-full flex items-center justify-center gap-2 bg-[#0B2341] text-white py-3.5 rounded-xl font-bold hover:bg-[#071629] transition-colors shadow-lg"
@@ -389,7 +403,6 @@ export default function CarteiraDigital() {
               </button>
             </div>
 
-            {/* Histórico de Viagens */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 flex-1 mb-6">
               <h3 className="font-bold text-[#0B2341] mb-4 flex items-center border-b pb-3 text-sm uppercase tracking-wider">
                 <Calendar size={18} className="mr-2 text-[#395D34]" /> Meu Histórico de Embarques

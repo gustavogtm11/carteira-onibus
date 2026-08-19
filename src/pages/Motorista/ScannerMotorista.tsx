@@ -27,7 +27,7 @@ export default function ScannerMotorista() {
   const isFiscal = roleStr === 'fiscal';
   const isAdmin = roleStr === 'admin';
   const isMotorista = roleStr === 'motorista';
-  const userCpf = userAny?.cpf ? String(userAny.cpf) : '';
+  const userCpf = userAny?.cpf ? String(userAny.cpf).replace(/\D/g, '') : '';
 
   // Configurações da viagem atual
   const [rotasDisponiveis, setRotasDisponiveis] = useState<string[]>([]);
@@ -51,7 +51,7 @@ export default function ScannerMotorista() {
     localStorage.setItem('horaVolta', horaVolta);
   }, [horaIda, horaVolta]);
 
-  // Busca de rotas garantida sem erros de tipo
+  // Busca de rotas garantida utilizando o CPF limpo do motorista
   useEffect(() => {
     const buscarRotas = async () => {
       if (!user) return;
@@ -69,7 +69,7 @@ export default function ScannerMotorista() {
         const snap = await getDocs(q);
         let lista = snap.docs.map(d => d.data().nome_rota as string);
         
-        // Fallback para rotas antigas vinculadas por e-mail
+        // Fallback para rotas legadas vinculadas por e-mail ou nome de motorista
         if (lista.length === 0 && isMotorista && user.email) {
           const snapLegado = await getDocs(query(collection(db, 'rotas'), where('motorista_email', '==', user.email)));
           lista = snapLegado.docs.map(d => d.data().nome_rota as string);
@@ -210,7 +210,6 @@ export default function ScannerMotorista() {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col font-sans">
       
-      {/* Navbar */}
       <nav className="bg-[#0B2341] text-white p-4 flex justify-between items-center shadow-lg z-10">
         <div className="flex items-center">
           <div className="bg-white/10 p-2 rounded-lg mr-3"><BusFront size={24} className="text-white" /></div>
@@ -226,7 +225,6 @@ export default function ScannerMotorista() {
 
       <div className="flex-1 flex flex-col p-4 max-w-md mx-auto w-full relative">
         
-        {/* Controles da Viagem */}
         <div className="bg-white p-5 rounded-2xl mb-6 shadow-md border border-gray-200">
           <div className="mb-4">
             <label className="block text-xs font-bold text-[#0B2341] uppercase tracking-wider mb-2">Selecione a Rota de Operação</label>
@@ -264,7 +262,6 @@ export default function ScannerMotorista() {
           </div>
         </div>
 
-        {/* Módulo do Leitor */}
         <div className={`bg-black rounded-2xl overflow-hidden shadow-xl mb-6 relative border-[4px] transition-all duration-300
           ${status === 'success' ? 'border-[#395D34]' : status === 'warning' || status === 'confirmacao' ? 'border-yellow-500' : status === 'error' ? 'border-[#890013]' : 'border-[#0B2341]'}`}
         >
@@ -276,7 +273,6 @@ export default function ScannerMotorista() {
           )}
           <div id="qr-reader" className="w-full text-black bg-black" style={{ display: status === 'confirmacao' ? 'none' : 'block' }}></div>
           
-          {/* TELA DE CONFIRMAÇÃO */}
           {status === 'confirmacao' && estudantePendente && (
             <div className="absolute inset-0 bg-yellow-500 text-gray-900 flex flex-col items-center justify-center p-6 z-20">
               <AlertTriangle size={50} className="mb-2 text-yellow-900 animate-pulse" />
@@ -295,7 +291,6 @@ export default function ScannerMotorista() {
           )}
         </div>
 
-        {/* FEEDBACKS */}
         {status === 'success' && estudante && (
           <div className="bg-[#395D34] text-white p-5 rounded-2xl shadow-xl flex items-center animate-in fade-in slide-in-from-bottom-4">
             <img src={estudante.foto_url} alt="Foto" className="w-16 h-16 rounded-xl border-2 border-white/50 object-cover mr-4 bg-gray-100" />

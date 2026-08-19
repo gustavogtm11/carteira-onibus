@@ -9,7 +9,6 @@ import { useAlert } from '../../contexts/AlertContext';
 import { Camera, Save, Printer, User, Search, Edit, ImagePlus, X, List, UserPlus, LogOut, Trash2, Users, Truck, MapPin, Clock, FileText, MessageCircle, Eye, Plus, Building } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
 
-// --- INTERFACES ---
 interface DocumentoAnexo {
   id: string;
   titulo: string;
@@ -40,12 +39,12 @@ interface InstituicaoDB {
 }
 
 interface Motorista {
-  id: string; // Será o CPF limpo
+  id: string; 
   nome: string;
   cpf: string;
   cnh: string;
   telefone: string;
-  uid_vinculado?: string; // Para quando ele criar a conta dele
+  uid_vinculado?: string; 
 }
 
 interface Rota {
@@ -68,7 +67,6 @@ interface ViagemHistorico {
 export default function CadastroEstudante() {
   const { showAlert, showConfirm } = useAlert();
 
-  // --- ESTADOS DE NAVEGAÇÃO ---
   const [mainTab, setMainTab] = useState<'estudantes' | 'motoristas'>('estudantes');
   const [subTabEstudantes, setSubTabEstudantes] = useState<'cadastro' | 'lista'>('cadastro');
   const [subTabMotoristas, setSubTabMotoristas] = useState<'cadastro' | 'lista' | 'rotas' | 'instituicoes'>('cadastro');
@@ -76,7 +74,6 @@ export default function CadastroEstudante() {
   const hoje = new Date();
   const fimDoAno = new Date(hoje.getFullYear(), 11, 31).toISOString().split('T')[0];
 
-  // --- ESTADOS: ESTUDANTE ---
   const [nome, setNome] = useState('');
   const [cpf, setCpf] = useState('');
   const [matricula, setMatricula] = useState('');
@@ -94,7 +91,6 @@ export default function CadastroEstudante() {
   const [busca, setBusca] = useState('');
   const [selecionados, setSelecionados] = useState<string[]>([]);
 
-  // --- ESTADOS: MOTORISTA ---
   const [motEditId, setMotEditId] = useState<string | null>(null);
   const [motNome, setMotNome] = useState('');
   const [motCpf, setMotCpf] = useState('');
@@ -103,7 +99,6 @@ export default function CadastroEstudante() {
   const [motoristas, setMotoristas] = useState<Motorista[]>([]);
   const [buscaMotorista, setBuscaMotorista] = useState('');
 
-  // --- ESTADOS: ROTA, PARADAS E INSTITUIÇÕES ---
   const [rotaEditId, setRotaEditId] = useState<string | null>(null);
   const [rotaNome, setRotaNome] = useState('');
   const [whatsappRota, setWhatsappRota] = useState('');
@@ -114,7 +109,6 @@ export default function CadastroEstudante() {
   
   const [novaInstNome, setNovaInstNome] = useState('');
 
-  // --- ESTADOS: MODAIS ---
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
   const [alunoHistorico, setAlunoHistorico] = useState<Estudante | null>(null);
   const [historicoViagens, setHistoricoViagens] = useState<ViagemHistorico[]>([]);
@@ -123,7 +117,6 @@ export default function CadastroEstudante() {
   const [modalDocsAlunoAberto, setModalDocsAlunoAberto] = useState(false);
   const [alunoDocs, setAlunoDocs] = useState<Estudante | null>(null);
 
-  // --- ESTADOS DA UI ---
   const [showWebcam, setShowWebcam] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isEditando, setIsEditando] = useState(false);
@@ -133,7 +126,6 @@ export default function CadastroEstudante() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
 
-  // --- CARREGAMENTO DE DADOS ---
   const carregarDados = async () => {
     try {
       const qEstudantes = query(collection(db, 'estudantes'), orderBy('nome'));
@@ -158,7 +150,6 @@ export default function CadastroEstudante() {
     carregarDados();
   }, [mainTab, subTabEstudantes, subTabMotoristas]);
 
-  // --- MÁSCARAS ---
   const handleCPFChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, '');
     if (value.length > 11) value = value.slice(0, 11);
@@ -195,7 +186,6 @@ export default function CadastroEstudante() {
     return `${primeiro} ${doMeio} ${ultimo}`;
   };
 
-  // --- FUNÇÕES DE IMAGEM E DOCUMENTO ---
   const capturarFoto = useCallback(() => {
     if (webcamRef.current) {
       setFoto(webcamRef.current.getScreenshot());
@@ -311,7 +301,6 @@ export default function CadastroEstudante() {
     setDocumentosForm(prev => prev.filter(doc => doc.id !== id));
   };
 
-  // --- LÓGICA DE AUTO-SELEÇÃO DE ROTA ---
   const handleInstituicaoSelecionada = (nomeInstituicao: string) => {
     setInstituicao(nomeInstituicao);
     const rotaEncontrada = rotas.find(r => r.paradas && r.paradas.includes(nomeInstituicao));
@@ -323,7 +312,6 @@ export default function CadastroEstudante() {
     }
   };
 
-  // --- SUBMITS ESTUDANTE ---
   const handleNovoCadastro = () => {
     setNome(''); setCpf(''); setMatricula(''); setDataNascimento(''); 
     setDataVencimento(fimDoAno); setInstituicao(''); setCurso(''); 
@@ -417,7 +405,6 @@ export default function CadastroEstudante() {
     });
   };
 
-  // --- VISUALIZAR DOCUMENTOS ---
   const abrirModalDocumentos = (aluno: Estudante) => {
     setAlunoDocs(aluno);
     setModalDocsAlunoAberto(true);
@@ -451,7 +438,6 @@ export default function CadastroEstudante() {
     }
   };
 
-  // --- SUBMITS E AÇÕES (MOTORISTA) ---
   const limparFormMotorista = () => {
     setMotEditId(null); setMotNome(''); setMotCpf(''); setMotCnh(''); setMotTelefone('');
   };
@@ -465,7 +451,6 @@ export default function CadastroEstudante() {
       const cpfLimpo = motCpf.replace(/\D/g, '');
       const dataMotorista = { id: cpfLimpo, nome: motNome, cpf: cpfLimpo, cnh: motCnh, telefone: motTelefone };
       
-      // Salva o Motorista usando o CPF Limpo como ID da coleção
       if (motEditId) {
         await updateDoc(doc(db, 'motoristas', motEditId), dataMotorista);
         showAlert('Motorista atualizado com sucesso!', 'success');
@@ -496,7 +481,6 @@ export default function CadastroEstudante() {
     });
   };
 
-  // --- SUBMITS E AÇÕES (ROTA) ---
   const limparFormRota = () => {
     setRotaEditId(null); setRotaNome(''); setWhatsappRota(''); setRotaMotoristaCpf('');
   };
@@ -513,7 +497,7 @@ export default function CadastroEstudante() {
       const dataRota = {
         nome_rota: rotaNome,
         whatsapp_link: whatsappRota,
-        motorista_cpf: motSelecionado.cpf, // Agora salva o CPF
+        motorista_cpf: motSelecionado.cpf, 
         motorista_nome: motSelecionado.nome
       };
 
@@ -546,7 +530,6 @@ export default function CadastroEstudante() {
     });
   };
 
-  // --- GERENCIAMENTO DE INSTITUIÇÕES (NOVO) ---
   const handleSalvarInstituicao = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novaInstNome.trim()) return;
@@ -575,7 +558,6 @@ export default function CadastroEstudante() {
     });
   };
 
-  // --- GERENCIAMENTO DE PARADAS ---
   const abrirGerenciadorParadas = (rota: Rota) => {
     setRotaSelecionadaParaParadas(rota);
     setModalParadasAberto(true);
@@ -607,7 +589,6 @@ export default function CadastroEstudante() {
   const estudantesFiltrados = estudantes.filter(e => e.nome.toLowerCase().includes(busca.toLowerCase()) || e.cpf.includes(busca) || e.matricula?.includes(busca));
   const motoristasFiltrados = motoristas.filter(m => m.nome.toLowerCase().includes(buscaMotorista.toLowerCase()) || m.cpf.includes(buscaMotorista));
 
-  // --- TEMPLATE DA CARTEIRINHA ---
   const CarteirinhaTemplate = ({ aluno }: { aluno: Partial<Estudante> }) => (
     <div className="w-[171.2mm] h-[53.98mm] bg-white border border-gray-300 shadow-lg flex flex-row print:shadow-none print:border-black rounded-lg overflow-hidden shrink-0 relative">
       <div className="absolute inset-0 z-0 flex items-center justify-center opacity-5 pointer-events-none">
@@ -698,7 +679,6 @@ export default function CadastroEstudante() {
   return (
     <div className={`min-h-screen bg-gray-50 p-6 ${modoImpressaoLote ? 'print:p-0 print:bg-white' : ''}`}>
       
-      {/* Impressão em Lote */}
       {modoImpressaoLote && (
         <div className="hidden print:flex flex-col gap-4 w-full items-center">
           {estudantes.filter(e => selecionados.includes(e.id_estudante)).map((aluno) => (
@@ -707,7 +687,6 @@ export default function CadastroEstudante() {
         </div>
       )}
 
-      {/* Modal de Documentos do Aluno */}
       {modalDocsAlunoAberto && alunoDocs && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200">
@@ -761,7 +740,6 @@ export default function CadastroEstudante() {
         </div>
       )}
 
-      {/* Modal de Histórico */}
       {modalHistoricoAberto && alunoHistorico && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200">
@@ -821,7 +799,6 @@ export default function CadastroEstudante() {
         </div>
       )}
 
-      {/* Modal de Gerenciamento de Paradas (Instituições na Rota) */}
       {modalParadasAberto && rotaSelecionadaParaParadas && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]">
@@ -863,10 +840,8 @@ export default function CadastroEstudante() {
         </div>
       )}
 
-      {/* INTERFACE PRINCIPAL */}
       <div className={`max-w-7xl mx-auto ${modoImpressaoLote ? 'print:hidden' : ''}`}>
         
-        {/* CABEÇALHO */}
         <div className="mb-6 print:hidden">
           <div className="flex justify-between items-center mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
             <h1 className="text-2xl font-bold text-[#0B2341] flex items-center">
@@ -895,7 +870,6 @@ export default function CadastroEstudante() {
           </div>
         </div>
 
-        {/* ================= SESSÃO: ESTUDANTES ================= */}
         {mainTab === 'estudantes' && (
           <div className="print:block">
             <div className="flex space-x-2 mb-6 print:hidden">
@@ -974,7 +948,6 @@ export default function CadastroEstudante() {
                       </div>
                     </div>
 
-                    {/* SEÇÃO DE DOCUMENTOS MÚLTIPLOS */}
                     <div className="mt-4 border border-gray-200 p-4 rounded-lg bg-gray-50">
                       <div className="flex justify-between items-center mb-3">
                         <label className="block text-sm font-bold text-[#0B2341]">Documentos Anexos (PDF ou Imagem)</label>
@@ -1010,7 +983,6 @@ export default function CadastroEstudante() {
                       )}
                     </div>
 
-                    {/* SEÇÃO FOTO */}
                     <div className="mt-4 border border-gray-200 p-4 rounded-lg bg-gray-50">
                       <label className="block text-sm font-bold text-[#0B2341] mb-3">Foto do Estudante</label>
                       <div className="flex flex-col sm:flex-row gap-4 items-center sm:items-start">
@@ -1075,7 +1047,6 @@ export default function CadastroEstudante() {
                         <td className="px-6 py-4"><div className="text-sm text-[#0B2341] font-semibold">{aluno.instituicao_destino}</div><div className="text-xs text-gray-500">Rota: {aluno.rota}</div></td>
                         <td className="px-6 py-4 text-center">
                           <div className="flex justify-center gap-2">
-                            {/* Botão de Documentos */}
                             {((aluno.documentos && aluno.documentos.length > 0) || aluno.documento_base64) && (
                               <button onClick={() => abrirModalDocumentos(aluno)} className="text-purple-600 bg-purple-50 hover:bg-purple-100 p-2 rounded-full transition" title="Ver Documentos"><FileText size={18} /></button>
                             )}
@@ -1093,7 +1064,6 @@ export default function CadastroEstudante() {
           </div>
         )}
 
-        {/* ================= SESSÃO: MOTORISTAS, ROTAS E ESCOLAS ================= */}
         {mainTab === 'motoristas' && (
           <div>
             <div className="flex space-x-2 mb-6 flex-wrap gap-y-2">
@@ -1172,7 +1142,6 @@ export default function CadastroEstudante() {
               </div>
             )}
 
-            {/* NOVA ABA: GESTÃO DE INSTITUIÇÕES */}
             {subTabMotoristas === 'instituicoes' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="bg-white p-6 rounded-xl shadow-sm border h-fit">
@@ -1219,7 +1188,6 @@ export default function CadastroEstudante() {
               </div>
             )}
 
-            {/* ABA: ROTAS E PARADAS */}
             {subTabMotoristas === 'rotas' && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border h-fit">
