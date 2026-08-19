@@ -24,14 +24,10 @@ export default function ScannerMotorista() {
   const userAny = user as any;
   const roleStr = String(userAny?.role || '');
   const isFiscal = roleStr === 'fiscal' || roleStr === 'admin';
-  const userCpf = userAny?.cpf ? String(userAny.cpf).replace(/\D/g, '') : '';
-  const userEmail = user?.email ? user.email.trim().toLowerCase() : '';
 
   const [rotasDisponiveis, setRotasDisponiveis] = useState<string[]>([]);
   const [rotaAtual, setRotaAtual] = useState('');
   const [tipoViagem, setTipoViagem] = useState<'ida' | 'volta'>('ida');
-  const [horaIda, setHoraIda] = useState(localStorage.getItem('horaIda') || '06:00');
-  const [horaVolta, setHoraVolta] = useState(localStorage.getItem('horaVolta') || '12:00');
   
   const [estudante, setEstudante] = useState<EstudanteScan | null>(null);
   const [status, setStatus] = useState<'idle' | 'success' | 'warning' | 'error' | 'loading' | 'confirmacao'>('idle');
@@ -48,21 +44,12 @@ export default function ScannerMotorista() {
   const coordsRef = useRef(coords);
   const rotaAtualRef = useRef(rotaAtual);
   const tipoViagemRef = useRef(tipoViagem);
-  const horaIdaRef = useRef(horaIda);
-  const horaVoltaRef = useRef(horaVolta);
   const rotasDisponiveisRef = useRef(rotasDisponiveis);
 
   useEffect(() => { coordsRef.current = coords; }, [coords]);
   useEffect(() => { rotaAtualRef.current = rotaAtual; }, [rotaAtual]);
   useEffect(() => { tipoViagemRef.current = tipoViagem; }, [tipoViagem]);
-  useEffect(() => { horaIdaRef.current = horaIda; }, [horaIda]);
-  useEffect(() => { horaVoltaRef.current = horaVolta; }, [horaVolta]);
   useEffect(() => { rotasDisponiveisRef.current = rotasDisponiveis; }, [rotasDisponiveis]);
-
-  useEffect(() => {
-    localStorage.setItem('horaIda', horaIda);
-    localStorage.setItem('horaVolta', horaVolta);
-  }, [horaIda, horaVolta]);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -74,7 +61,7 @@ export default function ScannerMotorista() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // Busca robusta de rotas para o motorista logado
+  // Busca ultra robusta das rotas do motorista logado
   useEffect(() => {
     const buscarRotas = async () => {
       if (!user) return;
@@ -88,22 +75,56 @@ export default function ScannerMotorista() {
             if (nome) listaRotasSet.add(String(nome).trim());
           });
         } else {
-          // Busca por CPF do motorista
-          if (userCpf) {
-            const snapCpf = await getDocs(query(collection(db, 'rotas'), where('motorista_cpf', '==', userCpf)));
-            snapCpf.docs.forEach(d => {
-              const nome = d.data().nome_rota || d.data().nome;
-              if (nome) listaRotasSet.add(String(nome).trim());
-            });
+          // Descobre o CPF e Email do motorista logado de forma abrangente
+          let cpfsPossiveis = new Set<string>();
+          let emailsPossiveis = new Set<string>();
+
+          if (userAny?.cpf) cpfsPossiveis.add(String(userAny.cpf).replace(/\D/g, ''));
+          if (user?.email) emailsPossiveis.add(String(user.email).trim().toLowerCase());
+
+          // Tenta buscar o perfil do usuário nas coleções do Firestore caso o auth state venha incompleto
+          if (user?.uid) {
+            try {
+              const userDocRef = await getDoc(doc(db, 'users', user.uid));
+              if (userDocRef.exists()) {
+                const uData = userDocRef.data();
+                if (uData.cpf) cpfsPossiveis.add(String(uData.cpf).replace(/\D/g, ''));
+                if (uData.email) emailsPossiveis.add(String(uData.email).trim().toLowerCase());
+              }
+            } catch (e) { /* ignora */ }
+
+            try {
+              const authDocRef = await getDoc(doc(db, 'usuarios_autorizados', user.uid));
+              if (authDocRef.exists()) {
+                const aData = authDocRef.data();
+                if (aData.cpf) cpfsPossiveis.add(String(aData.cpf).replace(/\D/g, ''));
+                if (aData.email) emailsPossiveis.add(String(aData.email).trim().toLowerCase());
+              }
+            } catch (e) { /* ignora */ }
           }
-          // Busca por Email do motorista (legado)
-          if (userEmail) {
-            const snapEmail = await getDocs(query(collection(db, 'rotas'), where('motorista_email', '==', userEmail)));
-            snapEmail.docs.forEach(d => {
-              const nome = d.data().nome_rota || d.data().nome;
-              if (nome) listaRotasSet.add(String(nome).trim());
-            });
-          }
+
+          // Busca todas as rotas e compara limpando qualquer máscara (ex: "11111111111" ou "111.111.111-11")
+          const snapRotas = await getDocs(collection(db, 'rotas'));
+          snapRotas.docs.forEach(d => {
+            const data = d.data();
+            const motCpfBanco = String(data.motorista_cpf || '').replace(/\D/g, '');
+            const motEmailBanco = String(data.motorista_email || '').trim().toLowerCase();
+            const nomeRota = data.nome_rota || data.nome;
+
+            if (nomeRota) {
+              let atrelado = false;
+              cpfsPossiveis.forEach(cpf => {
+                if (cpf && motCpfBanco === cpf) atrelado = true;
+              });
+              emailsPossiveis.forEach(email => {
+                if (email && motEmailBanco === email) atrelado = true;
+              });
+
+              if (atrelado) {
+                listaRotasSet.add(String(nomeRota).trim());
+              }
+            }
+          });
         }
 
         const listaFinal = Array.from(listaRotasSet);
@@ -114,8 +135,9 @@ export default function ScannerMotorista() {
       }
     };
     buscarRotas();
-  }, [user, isFiscal, userCpf, userEmail]);
+  }, [user, isFiscal, userAny]);
 
+  // Carrega os embarques do dia considerando o sentido atual (Ida ou Volta)
   useEffect(() => {
     const carregarControleDeEmbarque = async () => {
       if (!rotaAtual) return;
@@ -203,16 +225,6 @@ export default function ScannerMotorista() {
     const html5QrCode = new Html5Qrcode(readerId);
     const config = { fps: 10, qrbox: { width: 180, height: 180 } };
 
-    const isHorarioProximo = (horarioAlvo: string, margemMinutos: number) => {
-      if (!horarioAlvo) return false;
-      const [hora, min] = horarioAlvo.split(':').map(Number);
-      const agora = new Date();
-      const alvo = new Date();
-      alvo.setHours(hora, min, 0, 0);
-      const diffEmMinutos = Math.abs(agora.getTime() - alvo.getTime()) / (1000 * 60);
-      return diffEmMinutos <= margemMinutos;
-    };
-
     const qrCodeSuccessCallback = async (decodedText: string) => {
       if (isProcessingRef.current) return;
       isProcessingRef.current = true;
@@ -240,12 +252,7 @@ export default function ScannerMotorista() {
             return;
           }
 
-          let sentidoCalculado = tipoViagemRef.current;
-          if (isHorarioProximo(horaIdaRef.current, 45)) sentidoCalculado = 'ida';
-          else if (isHorarioProximo(horaVoltaRef.current, 45)) sentidoCalculado = 'volta';
-          
-          setTipoViagem(sentidoCalculado);
-
+          const sentidoCalculado = tipoViagemRef.current;
           const rotaAlunoLimpa = String(dadosEstudante.rota || '').trim().toLowerCase();
           const rotaAtualLimpa = String(rotaAtualRef.current || '').trim().toLowerCase();
           const listaRotasMotorista = rotasDisponiveisRef.current.map(r => r.trim().toLowerCase());
@@ -363,10 +370,6 @@ export default function ScannerMotorista() {
             <div className="flex gap-1 flex-1 h-full">
               <button onClick={() => setTipoViagem('ida')} className={`flex-1 rounded-lg font-bold transition-all text-xs border ${tipoViagem === 'ida' ? 'bg-[#395D34] border-[#395D34] text-white shadow-inner' : 'bg-white border-gray-300 text-gray-500'}`}>IDA</button>
               <button onClick={() => setTipoViagem('volta')} className={`flex-1 rounded-lg font-bold transition-all text-xs border ${tipoViagem === 'volta' ? 'bg-[#0B2341] border-[#0B2341] text-white shadow-inner' : 'bg-white border-gray-300 text-gray-500'}`}>VOLTA</button>
-            </div>
-            <div className="flex gap-1 shrink-0 h-full">
-              <input type="time" value={horaIda} onChange={e => setHoraIda(e.target.value)} title="Auto-Ida" className="w-[72px] bg-gray-50 border border-gray-300 rounded-lg text-[10px] font-bold text-[#0B2341] outline-none text-center px-1" />
-              <input type="time" value={horaVolta} onChange={e => setHoraVolta(e.target.value)} title="Auto-Volta" className="w-[72px] bg-gray-50 border border-gray-300 rounded-lg text-[10px] font-bold text-[#0B2341] outline-none text-center px-1" />
             </div>
           </div>
         </div>
