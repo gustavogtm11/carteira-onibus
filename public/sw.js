@@ -1,22 +1,12 @@
 // public/sw.js
-const CACHE_NAME = 'passe-livre-v2';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/manifest.json'
-];
+const CACHE_NAME = 'passe-livre-cache-v3';
 
-// Instala o Service Worker e guarda os arquivos básicos em cache
+// Instalação limpa
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(urlsToCache);
-    })
-  );
   self.skipWaiting();
 });
 
-// Ativa e limpa caches antigos
+// Ativação e limpeza de caches antigos
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -32,35 +22,36 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(clients.claim());
 });
 
-// Intercepta as requisições com tratamento seguro para evitar 'null' no iOS
+// Estratégia Stale-While-Revalidate / Cache Dinâmico
 self.addEventListener('fetch', (event) => {
-  // Ignora requisições que não sejam GET ou que sejam do Firebase/externas se necessário
+  // Ignora requisições que não sejam GET ou que sejam do Firebase Auth / Firestore (APIs externas dinâmicas)
   if (event.request.method !== 'GET') return;
+  if (event.request.url.includes('firestore.googleapis.com') || event.request.url.includes('identitytoolkit')) {
+    return;
+  }
 
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Se a resposta da rede for válida, podemos opcionalmente guardá-la em cache
-        return response;
-      })
-      .catch(() => {
-        // Se falhar (sem internet), busca no cache
-        return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
+    caches.match(event.request).then((cachedResponse) => {
+      // Retorna do cache se existir
+      const fetchPromise = fetch(event.request)
+        .then((networkResponse) => {
+          // Se a resposta da rede for válida, atualiza o cache em segundo plano
+          if (networkResponse && networkResponse.status === 200) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
           }
-          
-          // Se for uma navegação de página e não achar no cache, retorna o index.html principal
+          return networkResponse;
+        })
+        .catch(() => {
+          // Se estiver offline e não achar no cache, retorna o index.html para rotas SPA
           if (event.request.mode === 'navigate') {
             return caches.match('/index.html');
           }
-
-          // Se nada for encontrado, retorna uma resposta vazia segura em vez de null (evita o erro do iOS)
-          return new Response('Offline', {
-            status: 503,
-            statusText: 'Service Unavailable',
-          });
         });
-      })
+
+      return cachedResponse || fetchPromise;
+    })
   );
 });
