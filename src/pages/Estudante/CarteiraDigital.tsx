@@ -151,14 +151,11 @@ export default function CarteiraDigital() {
 
   const buscarDeclaracoes = async (nomeRota: string) => {
     try {
-      // Como o Firebase tem limitações com arrays em algumas consultas simples, 
-      // buscamos as declarações e filtramos em memória para maior segurança
       const snap = await getDocs(collection(db, 'declaracoes'));
       const lista: Declaracao[] = [];
       
       snap.forEach(doc => {
         const data = doc.data() as Declaracao;
-        // Se a declaração é para 'Todas' ou inclui a rota do aluno, nós listamos
         if (data.rotas && (data.rotas.includes(nomeRota) || data.rotas.includes('Todas'))) {
           lista.push({ ...data, id: doc.id });
         }
@@ -407,7 +404,7 @@ export default function CarteiraDigital() {
                 </div>
               )}
               
-              {/* CARTÃO COM FLIP 3D CORRIGIDO */}
+              {/* CARTÃO COM FLIP 3D CORRIGIDO PARA MOBILE/SAFARI */}
               <div 
                 className="w-full aspect-[1.58] bg-transparent cursor-pointer group relative"
                 style={{ perspective: '1000px' }}
@@ -417,6 +414,7 @@ export default function CarteiraDigital() {
                   className="relative w-full h-full transition-transform duration-700 shadow-2xl rounded-2xl"
                   style={{ 
                     transformStyle: 'preserve-3d', 
+                    WebkitTransformStyle: 'preserve-3d', // Correção para Safari/iOS
                     transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)' 
                   }}
                 >
@@ -424,7 +422,12 @@ export default function CarteiraDigital() {
                   {/* ================= FRENTE DO CARTÃO ================= */}
                   <div 
                     className={`absolute inset-0 w-full h-full bg-gradient-to-br from-white via-gray-50 to-blue-50 rounded-2xl p-5 flex flex-col justify-between text-gray-800 overflow-hidden border-2 shadow-xl ${estaVencido ? 'border-[#890013]' : 'border-[#0B2341]/30'}`}
-                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', backgroundColor: '#ffffff' }}
+                    style={{ 
+                      backfaceVisibility: 'hidden', 
+                      WebkitBackfaceVisibility: 'hidden', // Correção iOS
+                      backgroundColor: '#ffffff',
+                      zIndex: flipped ? 1 : 2 // Evita sobreposição bugada
+                    }}
                   >
                     <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
                       <img src="/logo-prefeitura.png" alt="Marca D'água" className="w-2/3 object-contain" />
@@ -473,7 +476,14 @@ export default function CarteiraDigital() {
                   {/* ================= VERSO DO CARTÃO ================= */}
                   <div 
                     className="absolute inset-0 w-full h-full bg-white rounded-2xl p-5 flex flex-col justify-between border-2 border-gray-200 shadow-xl text-gray-800"
-                    style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)', backgroundColor: '#ffffff' }}
+                    style={{ 
+                      backfaceVisibility: 'hidden', 
+                      WebkitBackfaceVisibility: 'hidden', 
+                      transform: 'rotateY(180deg)',
+                      WebkitTransform: 'rotateY(180deg)', // Correção iOS 
+                      backgroundColor: '#ffffff',
+                      zIndex: flipped ? 2 : 1 // Evita sobreposição bugada
+                    }}
                   >
                     <div className="flex w-full h-full">
                       <div className="flex flex-col justify-center h-full w-[55%] pr-2 relative z-10">

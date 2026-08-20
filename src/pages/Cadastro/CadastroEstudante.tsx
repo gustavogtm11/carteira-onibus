@@ -9,7 +9,7 @@ import { useAlert } from '../../contexts/AlertContext';
 import { 
   Camera, Save, Printer, User, Search, Edit, ImagePlus, X, List, UserPlus, LogOut, 
   Trash2, Users, Truck, MapPin, Clock, FileText, MessageCircle, Eye, Plus, Building, 
-  Menu, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, FileSignature
+  Menu, Bold, Italic, Underline, FileSignature, BarChart3, Filter, KeyRound, AlertTriangle, ShieldCheck
 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
 
@@ -49,6 +49,7 @@ interface Motorista {
   cpf: string;
   cnh: string;
   telefone: string;
+  uid_vinculado?: string;
 }
 
 interface Rota {
@@ -58,14 +59,19 @@ interface Rota {
   paradas?: string[];
   motorista_cpf?: string;
   motorista_nome?: string;
+  motorista_email?: string;
 }
 
 interface ViagemHistorico {
   id: string;
   data_hora: any;
   id_rota_onibus?: string;
+  rota_original_aluno?: string;
   id_rota?: string;
   tipo_viagem: 'ida' | 'volta';
+  nome_estudante?: string;
+  id_estudante?: string;
+  acesso_universal?: boolean;
 }
 
 interface Declaracao {
@@ -77,16 +83,14 @@ interface Declaracao {
   data_validade: string;
 }
 
-// Tipagem das telas do menu
-type ViewType = 'estudantes_cad' | 'estudantes_lista' | 'motoristas_cad' | 'motoristas_lista' | 'instituicoes' | 'rotas' | 'declaracoes';
+type ViewType = 'dashboard' | 'estudantes_cad' | 'estudantes_lista' | 'motoristas_cad' | 'motoristas_lista' | 'instituicoes' | 'rotas' | 'declaracoes';
 
 export default function CadastroEstudante() {
   const { showAlert, showConfirm } = useAlert();
 
-  // Estados de Navegação do Menu Sidebar
-  const [currentView, setCurrentView] = useState<ViewType>('estudantes_lista');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile
-  const [isSidebarHovered, setIsSidebarHovered] = useState(false); // Desktop
+  const [currentView, setCurrentView] = useState<ViewType>('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false);
 
   const hoje = new Date();
   const dataHojeStr = hoje.toISOString().split('T')[0];
@@ -128,7 +132,6 @@ export default function CadastroEstudante() {
   const [rotas, setRotas] = useState<Rota[]>([]);
   const [rotaSelecionadaParaParadas, setRotaSelecionadaParaParadas] = useState<Rota | null>(null);
   const [modalParadasAberto, setModalParadasAberto] = useState(false);
-  
   const [novaInstNome, setNovaInstNome] = useState('');
 
   // ================= ESTADOS DECLARAÇÕES =================
@@ -139,12 +142,19 @@ export default function CadastroEstudante() {
   const [declAssinatura, setDeclAssinatura] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
 
+  // ================= ESTADOS DASHBOARD & AUDITORIA =================
+  const [dashFiltro, setDashFiltro] = useState<'hoje' | 'mes' | 'ano' | 'custom'>('hoje');
+  const [dashDataInicio, setDashDataInicio] = useState(dataHojeStr);
+  const [dashDataFim, setDashDataFim] = useState(dataHojeStr);
+  const [dashMotoristaFiltro, setDashMotoristaFiltro] = useState('todos');
+  const [dashViagens, setDashViagens] = useState<ViagemHistorico[]>([]);
+  const [loadingDash, setLoadingDash] = useState(false);
+
   // ================= OUTROS ESTADOS =================
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
   const [alunoHistorico, setAlunoHistorico] = useState<Estudante | null>(null);
   const [historicoViagens, setHistoricoViagens] = useState<ViagemHistorico[]>([]);
   const [carregandoHistorico, setCarregandoHistorico] = useState(false);
-  
   const [modalDocsAlunoAberto, setModalDocsAlunoAberto] = useState(false);
   const [alunoDocs, setAlunoDocs] = useState<Estudante | null>(null);
 
@@ -173,13 +183,12 @@ export default function CadastroEstudante() {
       const snapRotas = await getDocs(collection(db, 'rotas'));
       setRotas(snapRotas.docs.map(d => ({ id: d.id, ...d.data() } as Rota)));
 
-      // Carregar e Excluir Declarações Vencidas
       const snapDecl = await getDocs(collection(db, 'declaracoes'));
       const declsValidas: Declaracao[] = [];
       snapDecl.forEach(async (d) => {
         const data = d.data() as Declaracao;
         if (data.data_validade && data.data_validade < dataHojeStr) {
-          await deleteDoc(doc(db, 'declaracoes', d.id)); // Exclui do banco
+          await deleteDoc(doc(db, 'declaracoes', d.id));
         } else {
           declsValidas.push({ ...data, id: d.id });
         }
@@ -195,6 +204,92 @@ export default function CadastroEstudante() {
     carregarDados();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView]);
+
+  // ================= DASHBOARD CARREGAR =================
+  const carregarDashboard = async () => {
+    setLoadingDash(true);
+    try {
+      let dataInicio = new Date(dashDataInicio + 'T00:00:00');
+      let dataFim = new Date(dashDataFim + 'T23:59:59');
+
+      if (dashFiltro === 'hoje') {
+        dataInicio = new Date(); dataInicio.setHours(0,0,0,0);
+        dataFim = new Date(); dataFim.setHours(23,59,59,999);
+      } else if (dashFiltro === 'mes') {
+        const now = new Date();
+        dataInicio = new Date(now.getFullYear(), now.getMonth(), 1);
+        dataFim = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+      } else if (dashFiltro === 'ano') {
+        const now = new Date();
+        dataInicio = new Date(now.getFullYear(), 0, 1);
+        dataFim = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
+      }
+
+      const q = query(
+        collection(db, 'historico_viagens'),
+        where('data_hora', '>=', dataInicio),
+        where('data_hora', '<=', dataFim)
+      );
+      
+      const snap = await getDocs(q);
+      let viagens = snap.docs.map(d => ({ id: d.id, ...d.data() } as ViagemHistorico));
+
+      if (dashMotoristaFiltro !== 'todos') {
+        const rotaNomesDoMotorista = rotas
+          .filter(r => r.motorista_cpf === dashMotoristaFiltro || r.motorista_email === dashMotoristaFiltro)
+          .map(r => r.nome_rota);
+        
+        viagens = viagens.filter(v => rotaNomesDoMotorista.includes(v.id_rota_onibus || ''));
+      }
+
+      setDashViagens(viagens);
+    } catch (err) {
+      console.error("Erro dashboard", err);
+      showAlert('Erro ao buscar dados do dashboard', 'error');
+    } finally {
+      setLoadingDash(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentView === 'dashboard') {
+      carregarDashboard();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentView, dashFiltro, dashMotoristaFiltro]);
+
+  // ================= CÁLCULOS AUDITORIA / DASHBOARD =================
+  const rotaAlunosCountMap = new Map<string, number>();
+  estudantes.forEach(e => {
+    const r = e.rota || 'Sem Rota';
+    rotaAlunosCountMap.set(r, (rotaAlunosCountMap.get(r) || 0) + 1);
+  });
+  const rotasOrdenadasPorAlunos = Array.from(rotaAlunosCountMap.entries())
+    .sort((a, b) => b[1] - a[1]);
+
+  const embarquesPorRotaMap = new Map<string, { ida: number, volta: number, total: number }>();
+  let totalAvulsosPeriodo = 0;
+
+  dashViagens.forEach(v => {
+    const nomeRota = v.id_rota_onibus || 'Desconhecida';
+    if (!embarquesPorRotaMap.has(nomeRota)) {
+      embarquesPorRotaMap.set(nomeRota, { ida: 0, volta: 0, total: 0 });
+    }
+    const item = embarquesPorRotaMap.get(nomeRota)!;
+    if (v.tipo_viagem === 'ida') item.ida++;
+    if (v.tipo_viagem === 'volta') item.volta++;
+    item.total++;
+
+    if (v.acesso_universal || (v.rota_original_aluno && v.rota_original_aluno !== nomeRota)) {
+      totalAvulsosPeriodo++;
+    }
+  });
+
+  const rotasEmbarquesConsolidados = Array.from(embarquesPorRotaMap.entries())
+    .map(([nome, dados]) => ({ nome, ...dados }))
+    .sort((a, b) => b.total - a.total);
+
+  const taxaAvulsos = dashViagens.length > 0 ? Math.round((totalAvulsosPeriodo / dashViagens.length) * 100) : 0;
 
   // ================= FUNÇÕES UTILITÁRIAS =================
   const handleCPFChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -227,10 +322,7 @@ export default function CadastroEstudante() {
     if (!nomeCompleto) return '';
     const partes = nomeCompleto.trim().split(' ');
     if (partes.length <= 2) return nomeCompleto;
-    const primeiro = partes[0];
-    const ultimo = partes[partes.length - 1];
-    const doMeio = partes.slice(1, -1).map(p => p.length > 2 ? p[0] + '.' : p).join(' ');
-    return `${primeiro} ${doMeio} ${ultimo}`;
+    return `${partes[0]} ${partes.slice(1, -1).map(p => p.length > 2 ? p[0] + '.' : p).join(' ')} ${partes[partes.length - 1]}`;
   };
 
   const comprimirImagem = (file: File, maxWidth = 400): Promise<string> => {
@@ -372,7 +464,7 @@ export default function CadastroEstudante() {
     }
   };
 
-  // ================= MOTORISTAS & ROTAS & INSTITUIÇÕES =================
+  // ================= MOTORISTAS & ROTAS =================
   const handleSalvarMotorista = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!motCpf || motCpf.length < 14) return showAlert('O CPF é obrigatório e deve ser válido.', 'error');
@@ -388,6 +480,23 @@ export default function CadastroEstudante() {
       setMotEditId(null); setMotNome(''); setMotCpf(''); setMotCnh(''); setMotTelefone('');
       carregarDados();
     } catch (error) { showAlert('Erro ao salvar motorista.', 'error'); } finally { setLoading(false); }
+  };
+
+  const handleZerarSenhaMotorista = (mot: Motorista) => {
+    showConfirm(
+      `Para zerar a senha, apague a conta antiga deste motorista no painel Authentication do Firebase. Clique em OK para desvincular o cadastro e permitir que ele crie uma nova senha no próximo acesso.`,
+      async () => {
+        try {
+          await updateDoc(doc(db, 'motoristas', mot.id), {
+            uid_vinculado: null
+          });
+          showAlert('Vínculo apagado! O motorista já pode criar uma nova senha.', 'success');
+          carregarDados();
+        } catch (err) {
+          showAlert('Erro ao desvincular senha.', 'error');
+        }
+      }
+    );
   };
 
   const handleSalvarRota = async (e: React.FormEvent) => {
@@ -433,7 +542,7 @@ export default function CadastroEstudante() {
     } catch (err) { showAlert('Erro ao atualizar parada.', 'error'); }
   };
 
-  // ================= DECLARAÇÕES (WYSIWYG) =================
+  // ================= DECLARAÇÕES =================
   const execFormat = (command: string, value?: string) => {
     document.execCommand(command, false, value);
     editorRef.current?.focus();
@@ -487,7 +596,7 @@ export default function CadastroEstudante() {
     });
   };
 
-  // ================= TEMPLATE DE IMPRESSÃO (CARTEIRA) =================
+  // ================= TEMPLATE IMPRESSÃO =================
   const CarteirinhaTemplate = ({ aluno }: { aluno: Partial<Estudante> }) => (
     <div className="w-[171.2mm] h-[53.98mm] bg-white border border-gray-300 shadow-lg flex flex-row print:shadow-none print:border-black rounded-lg overflow-hidden shrink-0 relative">
       <div className="absolute inset-0 z-0 flex items-center justify-center opacity-5 pointer-events-none">
@@ -539,11 +648,10 @@ export default function CadastroEstudante() {
   const filterEstudantes = estudantes.filter(e => e.nome.toLowerCase().includes(busca.toLowerCase()) || e.cpf.includes(busca));
   const filterMotoristas = motoristas.filter(m => m.nome.toLowerCase().includes(buscaMotorista.toLowerCase()) || m.cpf.includes(buscaMotorista));
 
-  // ================= RENDERIZAÇÃO PRINCIPAL =================
+  // ================= RENDERIZAÇÃO =================
   return (
     <div className={`h-screen flex bg-gray-50 overflow-hidden ${modoImpressaoLote ? 'print:p-0 print:bg-white' : ''}`}>
       
-      {/* IMPRESSÃO EM LOTE (Oculta na tela normal) */}
       {modoImpressaoLote && (
         <div className="hidden print:flex flex-col gap-4 w-full items-center">
           {estudantes.filter(e => selecionados.includes(e.id_estudante)).map((aluno) => (
@@ -552,87 +660,251 @@ export default function CadastroEstudante() {
         </div>
       )}
 
-      {/* OVERLAY MOBILE PARA SIDEBAR */}
       {isSidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden print:hidden" onClick={() => setIsSidebarOpen(false)} />
       )}
 
-      {/* SIDEBAR HAMBURGUER (Responsivo) */}
+      {/* SIDEBAR COM TÍTULOS PROTEGIDOS CONTRA CORTE NO MODO PC */}
       <aside 
-        className={`fixed inset-y-0 left-0 z-50 bg-[#0B2341] text-white flex flex-col transition-all duration-300 print:hidden
+        className={`fixed inset-y-0 left-0 z-50 bg-[#0B2341] text-white flex flex-col h-full transition-all duration-300 print:hidden
           ${isSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full w-64'} 
-          lg:translate-x-0 lg:static ${isSidebarHovered ? 'lg:w-64' : 'lg:w-20'} shadow-2xl`}
+          lg:translate-x-0 lg:static ${isSidebarHovered ? 'lg:w-64' : 'lg:w-20'} shadow-2xl overflow-hidden`}
         onMouseEnter={() => setIsSidebarHovered(true)}
         onMouseLeave={() => setIsSidebarHovered(false)}
       >
-        <div className="flex items-center justify-between p-4 h-16 border-b border-white/10 overflow-hidden shrink-0">
+        {/* Cabeçalho Fixo do Menu */}
+        <div className="flex items-center justify-between p-4 h-16 border-b border-white/15 overflow-hidden shrink-0 bg-[#0B2341] z-10">
           <div className="flex items-center gap-3">
             <img src="/logo-prefeitura.png" alt="Logo" className="w-8 h-8 object-contain shrink-0 bg-white p-1 rounded" />
-            <span className={`font-bold text-sm whitespace-nowrap transition-opacity duration-300 ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Prefeitura Angelim</span>
+            <span className={`font-bold text-sm whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Pref. Angelim</span>
           </div>
           <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden text-white/60 hover:text-white"><X size={24} /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-1 px-3">
-          <div className="text-[10px] uppercase font-bold text-gray-400 mb-2 mt-2 px-2 whitespace-nowrap overflow-hidden text-ellipsis">
-            {(isSidebarHovered || isSidebarOpen) ? 'Gestão de Alunos' : '...'}
-          </div>
+        {/* Lista de Navegação com rolagem interna vertical */}
+        <div className="flex-1 min-h-0 py-4 flex flex-col gap-1 px-3 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full">
+          <button onClick={() => {setCurrentView('dashboard'); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'dashboard' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
+            <BarChart3 size={20} className="shrink-0" />
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Dashboard Auditoria</span>
+          </button>
+
+          {/* TÍTULO SEÇÃO 1 */}
+          {(isSidebarHovered || isSidebarOpen) ? (
+            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1 mt-3 p-3  tracking-wider whitespace-nowrap overflow-hidden">
+              Gestão de Alunos
+            </div>
+          ) : (
+            <div className="my-2 border-t border-white/10 mx-2 lg:block hidden"></div>
+          )}
+
           <button onClick={() => {setCurrentView('estudantes_lista'); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'estudantes_lista' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
             <List size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Lista de Estudantes</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Lista de Estudantes</span>
           </button>
           <button onClick={() => {handleNovoCadastro(); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'estudantes_cad' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
             <UserPlus size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Cadastrar Estudante</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Cadastrar Estudante</span>
           </button>
           <button onClick={() => {setCurrentView('declaracoes'); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'declaracoes' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
             <FileSignature size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Declarações (Word)</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Declarações (Word)</span>
           </button>
 
-          <div className="text-[10px] uppercase font-bold text-gray-400 mb-2 mt-4 px-2 whitespace-nowrap overflow-hidden text-ellipsis">
-            {(isSidebarHovered || isSidebarOpen) ? 'Logística & Cadastros' : '...'}
-          </div>
+          {/* TÍTULO SEÇÃO 2 */}
+          {(isSidebarHovered || isSidebarOpen) ? (
+            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1 mt-3 p-3 tracking-wider whitespace-nowrap overflow-hidden">
+              Logística & Frota
+            </div>
+          ) : (
+            <div className="my-2 border-t border-white/10 mx-2 lg:block hidden"></div>
+          )}
+
           <button onClick={() => {setCurrentView('motoristas_lista'); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'motoristas_lista' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
             <Users size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Motoristas Ativos</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Motoristas Ativos</span>
           </button>
           <button onClick={() => {setCurrentView('motoristas_cad'); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'motoristas_cad' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
             <Truck size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Cadastrar Motorista</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Cadastrar Motorista</span>
           </button>
           <button onClick={() => {setCurrentView('rotas'); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'rotas' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
             <MapPin size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Gestão de Rotas</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Gestão de Rotas</span>
           </button>
           <button onClick={() => {setCurrentView('instituicoes'); setIsSidebarOpen(false);}} className={`flex items-center gap-4 px-3 py-3 rounded-xl transition ${currentView === 'instituicoes' ? 'bg-[#395D34] text-white font-bold' : 'hover:bg-white/10 text-gray-300'}`}>
             <Building size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Instituições (Escolas)</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Instituições</span>
           </button>
         </div>
 
-        <div className="p-4 border-t border-white/10 shrink-0">
+        {/* Rodapé Fixo do Menu (Sair) */}
+        <div className="p-4 border-t border-white/15 shrink-0 bg-[#0B2341] z-10">
           <button onClick={() => signOut(auth)} className="flex items-center gap-4 px-3 py-3 w-full rounded-xl hover:bg-red-900/50 text-red-300 transition">
             <LogOut size={20} className="shrink-0" />
-            <span className={`whitespace-nowrap transition-opacity ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Sair do Sistema</span>
+            <span className={`transition-opacity whitespace-nowrap ${(isSidebarHovered || isSidebarOpen) ? 'opacity-100' : 'opacity-0 lg:hidden'}`}>Sair do Sistema</span>
           </button>
         </div>
       </aside>
 
       {/* ÁREA PRINCIPAL */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden print:overflow-visible relative">
-        
-        {/* Topbar Mobile */}
         <header className="h-16 bg-white border-b border-gray-200 flex items-center px-4 lg:hidden shrink-0 print:hidden justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-[#0B2341] hover:bg-gray-100 rounded-lg"><Menu size={24} /></button>
+            <button onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-[#0B2341]"><Menu size={24} /></button>
             <h1 className="font-bold text-[#0B2341]">Menu Principal</h1>
           </div>
         </header>
 
-        {/* Conteúdo Dinâmico */}
         <div className={`flex-1 overflow-y-auto p-4 md:p-6 ${modoImpressaoLote ? 'print:p-0' : ''}`}>
           
+          {/* =========== TELA: DASHBOARD AUDITORIA =========== */}
+          {currentView === 'dashboard' && (
+            <div className="space-y-6 animate-in fade-in max-w-7xl mx-auto">
+              
+              <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-4 rounded-2xl shadow-sm border border-gray-200">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={26} className="text-[#395D34]" />
+                  <div>
+                    <h2 className="text-xl font-bold text-[#0B2341]">Painel de Auditoria e Gestão</h2>
+                    <p className="text-xs text-gray-500 font-medium">Dados consolidados da frota e transporte escolar</p>
+                  </div>
+                </div>
+                
+                <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
+                  
+                  <select 
+                    value={dashMotoristaFiltro} 
+                    onChange={e => setDashMotoristaFiltro(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-bold text-[#0B2341] outline-none bg-gray-50"
+                  >
+                    <option value="todos">Todos os Motoristas</option>
+                    {motoristas.map(m => (
+                      <option key={m.id} value={m.cpf}>{m.nome}</option>
+                    ))}
+                  </select>
+
+                  <div className="bg-gray-100 rounded-lg p-1 flex">
+                    <button onClick={() => setDashFiltro('hoje')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition ${dashFiltro === 'hoje' ? 'bg-white shadow text-[#0B2341]' : 'text-gray-500'}`}>Hoje</button>
+                    <button onClick={() => setDashFiltro('mes')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition ${dashFiltro === 'mes' ? 'bg-white shadow text-[#0B2341]' : 'text-gray-500'}`}>Mês</button>
+                    <button onClick={() => setDashFiltro('ano')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition ${dashFiltro === 'ano' ? 'bg-white shadow text-[#0B2341]' : 'text-gray-500'}`}>Ano</button>
+                    <button onClick={() => setDashFiltro('custom')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center ${dashFiltro === 'custom' ? 'bg-white shadow text-[#0B2341]' : 'text-gray-500'}`}><Filter size={12} className="mr-1"/> Período</button>
+                  </div>
+
+                  {dashFiltro === 'custom' && (
+                    <div className="flex items-center gap-2">
+                      <input type="date" value={dashDataInicio} onChange={e => setDashDataInicio(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[#395D34]" />
+                      <span className="text-gray-400">-</span>
+                      <input type="date" value={dashDataFim} onChange={e => setDashDataFim(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[#395D34]" />
+                      <button onClick={carregarDashboard} className="bg-[#0B2341] text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#071629]">OK</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {loadingDash ? (
+                <div className="flex flex-col items-center justify-center py-20">
+                  <div className="w-10 h-10 border-4 border-[#395D34] border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <p className="font-bold text-gray-500 text-sm">Gerando relatórios de auditoria...</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 flex flex-col justify-center">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Users size={22} /></div>
+                      <h3 className="font-bold text-gray-500 text-xs uppercase tracking-wider">Total de Embarques</h3>
+                    </div>
+                    <p className="text-4xl font-black text-[#0B2341] mt-1">{dashViagens.length}</p>
+                    <p className="text-[11px] text-gray-400 mt-1 font-medium">Passagens validadas no filtro selecionado.</p>
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 flex flex-col justify-center">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="p-3 bg-yellow-50 text-yellow-600 rounded-xl"><AlertTriangle size={22} /></div>
+                      <h3 className="font-bold text-gray-500 text-xs uppercase tracking-wider">Passageiros Avulsos</h3>
+                    </div>
+                    <p className="text-4xl font-black text-yellow-600 mt-1">{totalAvulsosPeriodo} <span className="text-sm font-bold text-gray-400">({taxaAvulsos}%)</span></p>
+                    <p className="text-[11px] text-gray-400 mt-1 font-medium">Embarques em rotas diferentes da original.</p>
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 flex flex-col justify-center">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="p-3 bg-green-50 text-[#395D34] rounded-xl"><Building size={22} /></div>
+                      <h3 className="font-bold text-gray-500 text-xs uppercase tracking-wider">Alunos Cadastrados</h3>
+                    </div>
+                    <p className="text-4xl font-black text-[#395D34] mt-1">{estudantes.length}</p>
+                    <p className="text-[11px] text-gray-400 mt-1 font-medium">Base ativa total no município.</p>
+                  </div>
+
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-[400px]">
+                    <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between shrink-0">
+                      <div className="flex items-center">
+                        <Users size={18} className="mr-2 text-[#395D34]" />
+                        <h3 className="font-bold text-sm text-[#0B2341]">Alunos Cadastrados por Rota</h3>
+                      </div>
+                      <span className="text-[10px] font-bold text-gray-500 bg-white px-2 py-1 rounded border">Ordem Decrescente</span>
+                    </div>
+                    <div className="overflow-y-auto flex-1 p-0">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-white sticky top-0 shadow-sm z-10">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Rota</th>
+                            <th className="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Estudantes</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-100">
+                          {rotasOrdenadasPorAlunos.map(([rotaNome, qtd], idx) => (
+                            <tr key={idx} className="hover:bg-gray-50 transition">
+                              <td className="px-4 py-3 text-xs font-bold text-[#0B2341] truncate max-w-[200px]">{rotaNome}</td>
+                              <td className="px-4 py-3 text-right text-xs font-black text-gray-700">{qtd}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col lg:col-span-2 h-[400px]">
+                    <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between shrink-0">
+                      <div className="flex items-center">
+                        <Truck size={18} className="mr-2 text-[#0B2341]" />
+                        <h3 className="font-bold text-sm text-[#0B2341]">Volume de Embarques por Rota (No Período)</h3>
+                      </div>
+                      <span className="text-[10px] font-bold text-gray-500 bg-white px-2 py-1 rounded border">Consolidado Quantitativo</span>
+                    </div>
+                    <div className="overflow-y-auto flex-1 p-0">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-white sticky top-0 shadow-sm z-10">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Rota / Ônibus</th>
+                            <th className="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Ida</th>
+                            <th className="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Volta</th>
+                            <th className="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Total Geral</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-100">
+                          {rotasEmbarquesConsolidados.length === 0 ? (
+                            <tr><td colSpan={4} className="text-center py-12 text-sm text-gray-400">Nenhum embarque registrado no filtro atual.</td></tr>
+                          ) : (
+                            rotasEmbarquesConsolidados.map((item, idx) => (
+                              <tr key={idx} className="hover:bg-blue-50/50 transition">
+                                <td className="px-4 py-3 text-xs font-bold text-[#0B2341]">{item.nome}</td>
+                                <td className="px-4 py-3 text-center text-xs font-bold text-green-700 bg-green-50/50">{item.ida}</td>
+                                <td className="px-4 py-3 text-center text-xs font-bold text-blue-700 bg-blue-50/50">{item.volta}</td>
+                                <td className="px-4 py-3 text-right text-xs font-black text-gray-900">{item.total}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                </div>
+              )}
+            </div>
+          )}
+
           {/* =========== TELA: LISTA ESTUDANTES =========== */}
           {currentView === 'estudantes_lista' && (
             <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border print:hidden animate-in fade-in">
@@ -801,18 +1073,17 @@ export default function CadastroEstudante() {
                 </form>
               </div>
 
-              <div className="flex flex-col items-center xl:items-start print:fixed print:top-0 print:left-0 print:w-full print:bg-white print:p-8">
-                <h2 className="text-lg font-bold mb-4 text-[#0B2341] print:hidden w-full border-b pb-2">Pré-visualização (Tamanho Real)</h2>
+              {/* Oculto em smartphones para parecer mais com um app mobile limpo */}
+              <div className="hidden xl:flex flex-col items-start print:fixed print:top-0 print:left-0 print:w-full print:bg-white print:p-8">
+                <h2 className="text-lg font-bold mb-4 text-[#0B2341] print:hidden w-full border-b pb-2">Pré-visualização</h2>
                 <CarteirinhaTemplate aluno={{ nome, cpf, matricula, data_nascimento: dataNascimento, data_vencimento: dataVencimento, instituicao_destino: instituicao, curso, turno, rota: rotaAtrelada, foto_url: foto || '' }} />
               </div>
             </div>
           )}
 
-          {/* =========== TELA: DECLARAÇÕES (WORD-LIKE) =========== */}
+          {/* =========== TELA: DECLARAÇÕES =========== */}
           {currentView === 'declaracoes' && (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 animate-in fade-in h-full">
-              
-              {/* Formulário do Documento */}
               <div className="bg-white rounded-2xl shadow-sm border p-4 md:p-6 flex flex-col h-full min-h-[600px]">
                 <h2 className="text-xl font-bold text-[#0B2341] border-b pb-3 mb-4 flex items-center">
                   <FileSignature size={24} className="mr-2 text-[#395D34]" /> Criar Nova Declaração
@@ -820,8 +1091,8 @@ export default function CadastroEstudante() {
                 
                 <div className="space-y-4 flex-1 flex flex-col">
                   <div>
-                    <label className="block text-sm font-semibold text-[#0B2341] mb-1">Título do Documento</label>
-                    <input type="text" value={declTitulo} onChange={e => setDeclTitulo(e.target.value)} placeholder="Ex: Declaração de Uso de Transporte" className="w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#0B2341] outline-none" />
+                    <label className="block text-sm font-semibold text-[#0B2341] mb-1">Título</label>
+                    <input type="text" value={declTitulo} onChange={e => setDeclTitulo(e.target.value)} placeholder="Ex: Declaração de Transporte" className="w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#0B2341] outline-none" />
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -831,15 +1102,14 @@ export default function CadastroEstudante() {
                         <option value="Todas" className="font-bold">Todas as Rotas</option>
                         {rotas.map(r => <option key={r.id} value={r.nome_rota}>{r.nome_rota}</option>)}
                       </select>
-                      <p className="text-[10px] text-gray-500 mt-1">Segure Ctrl para selecionar várias.</p>
                     </div>
                     <div className="flex flex-col gap-4">
                       <div>
-                        <label className="block text-sm font-semibold text-[#0B2341] mb-1">Data de Expiração</label>
+                        <label className="block text-sm font-semibold text-[#0B2341] mb-1">Validade</label>
                         <input type="date" value={declValidade} onChange={e => setDeclValidade(e.target.value)} className="w-full rounded-lg border-gray-300 p-2 border focus:border-[#0B2341] outline-none" />
                       </div>
                       <div>
-                        <label className="block text-sm font-semibold text-[#0B2341] mb-1">Imagem de Assinatura (Opcional)</label>
+                        <label className="block text-sm font-semibold text-[#0B2341] mb-1">Assinatura</label>
                         <input type="file" accept="image/*" ref={assinaturaInputRef} onChange={handleAssinaturaUpload} className="hidden" />
                         <button onClick={() => assinaturaInputRef.current?.click()} className="w-full bg-gray-100 text-[#0B2341] border border-gray-300 py-2 rounded-lg text-sm font-bold hover:bg-gray-200 transition">
                           {declAssinatura ? 'Trocar Assinatura' : 'Anexar Assinatura'}
@@ -848,56 +1118,38 @@ export default function CadastroEstudante() {
                     </div>
                   </div>
 
-                  {/* WYSIWYG EDITOR */}
                   <div className="border border-gray-300 rounded-xl flex flex-col flex-1 overflow-hidden mt-2 bg-gray-50">
-                    
-                    {/* Toolbar Formatação */}
                     <div className="bg-white border-b border-gray-300 p-2 flex flex-wrap gap-2 items-center shrink-0">
                       <div className="flex bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
-                        <button onClick={() => execFormat('bold')} className="p-2 hover:bg-gray-200 transition text-gray-700" title="Negrito"><Bold size={16} /></button>
-                        <button onClick={() => execFormat('italic')} className="p-2 hover:bg-gray-200 border-l border-gray-200 transition text-gray-700" title="Itálico"><Italic size={16} /></button>
-                        <button onClick={() => execFormat('underline')} className="p-2 hover:bg-gray-200 border-l border-gray-200 transition text-gray-700" title="Sublinhado"><Underline size={16} /></button>
+                        <button onClick={() => execFormat('bold')} className="p-2 hover:bg-gray-200"><Bold size={16} /></button>
+                        <button onClick={() => execFormat('italic')} className="p-2 hover:bg-gray-200 border-l"><Italic size={16} /></button>
+                        <button onClick={() => execFormat('underline')} className="p-2 hover:bg-gray-200 border-l"><Underline size={16} /></button>
                       </div>
-                      <div className="flex bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
-                        <button onClick={() => execFormat('justifyLeft')} className="p-2 hover:bg-gray-200 transition text-gray-700"><AlignLeft size={16} /></button>
-                        <button onClick={() => execFormat('justifyCenter')} className="p-2 hover:bg-gray-200 border-l border-gray-200 transition text-gray-700"><AlignCenter size={16} /></button>
-                        <button onClick={() => execFormat('justifyRight')} className="p-2 hover:bg-gray-200 border-l border-gray-200 transition text-gray-700"><AlignRight size={16} /></button>
-                      </div>
-                      
-                      {/* Váriaveis */}
                       <div className="flex-1 flex flex-wrap gap-1 justify-end">
-                        <button onClick={() => insertVariable('nome_aluno')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold hover:bg-blue-200">+ Nome</button>
-                        <button onClick={() => insertVariable('cpf_aluno')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold hover:bg-blue-200">+ CPF</button>
-                        <button onClick={() => insertVariable('instituicao')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold hover:bg-blue-200">+ Instituição</button>
-                        <button onClick={() => insertVariable('rota')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold hover:bg-blue-200">+ Rota</button>
+                        <button onClick={() => insertVariable('nome_aluno')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold">+ Nome</button>
+                        <button onClick={() => insertVariable('cpf_aluno')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold">+ CPF</button>
+                        <button onClick={() => insertVariable('instituicao')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold">+ Instituição</button>
+                        <button onClick={() => insertVariable('rota')} className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold">+ Rota</button>
                       </div>
                     </div>
 
-                    {/* Canvas do Editor */}
                     <div className="flex-1 overflow-y-auto p-0 bg-white relative">
                       <img src="/timbre.png" alt="Timbre" className="w-full h-auto object-cover pointer-events-none mb-4" />
                       <div 
                         ref={editorRef}
                         contentEditable
-                        data-placeholder="Digite o conteúdo do documento aqui..."
+                        data-placeholder="Digite o conteúdo..."
                         className="px-8 pb-8 min-h-[200px] outline-none text-gray-800 text-justify font-serif empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400 block"
                       />
-                      {declAssinatura && (
-                        <div className="mt-8 pb-8 flex flex-col items-center justify-center w-full">
-                          <img src={declAssinatura} alt="Assinatura" className="h-16 w-auto object-contain mb-1" />
-                          <div className="border-t border-black w-48 text-center pt-1 font-bold uppercase text-xs">Assinatura</div>
-                        </div>
-                      )}
                     </div>
                   </div>
 
-                  <button onClick={handleSalvarDeclaracao} disabled={loading} className="w-full bg-[#395D34] text-white py-4 rounded-xl font-bold shadow hover:bg-[#2c4928] disabled:opacity-50 text-lg flex justify-center items-center mt-2 shrink-0">
+                  <button onClick={handleSalvarDeclaracao} disabled={loading} className="w-full bg-[#395D34] text-white py-4 rounded-xl font-bold shadow hover:bg-[#2c4928] disabled:opacity-50 text-lg flex justify-center items-center mt-2">
                     <Save size={20} className="mr-2" /> Emitir Declaração
                   </button>
                 </div>
               </div>
 
-              {/* Lista de Declarações Ativas */}
               <div className="bg-white rounded-2xl shadow-sm border p-4 md:p-6 h-fit">
                 <h2 className="text-lg font-bold text-[#0B2341] border-b pb-3 mb-4">Declarações Ativas</h2>
                 <div className="space-y-3">
@@ -910,12 +1162,7 @@ export default function CadastroEstudante() {
                           <h3 className="font-bold text-[#0B2341] leading-tight">{decl.titulo}</h3>
                           <button onClick={() => handleExcluirDeclaracao(decl.id)} className="text-red-500 bg-red-50 p-1.5 rounded-lg hover:bg-red-100 transition"><Trash2 size={16} /></button>
                         </div>
-                        <div className="text-xs text-gray-500 font-medium mb-2 line-clamp-1">
-                          Rotas: {decl.rotas.join(', ')}
-                        </div>
-                        <div className="flex items-center text-[10px] font-bold text-[#890013] bg-red-50 px-2 py-1 rounded w-fit">
-                          Expira em: {new Date(decl.data_validade).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}
-                        </div>
+                        <div className="text-xs text-gray-500 font-medium mb-2">Rotas: {decl.rotas.join(', ')}</div>
                       </div>
                     ))
                   )}
@@ -929,7 +1176,7 @@ export default function CadastroEstudante() {
              <div className="bg-white p-6 rounded-2xl shadow-sm border max-w-2xl mx-auto animate-in fade-in">
                 <h2 className="text-xl font-bold text-[#0B2341] border-b pb-3 mb-4 flex justify-between items-center">
                   {motEditId ? 'Editar Motorista' : 'Novo Motorista'}
-                  {motEditId && <button onClick={() => {setMotEditId(null); setMotNome(''); setMotCpf(''); setMotCnh(''); setMotTelefone('');}} className="text-sm text-[#890013]">Cancelar Edição</button>}
+                  {motEditId && <button onClick={() => {setMotEditId(null); setMotNome(''); setMotCpf(''); setMotCnh(''); setMotTelefone('');}} className="text-sm text-[#890013]">Cancelar</button>}
                 </h2>
                 <form onSubmit={handleSalvarMotorista} className="space-y-4">
                   <div><label className="block text-sm font-semibold mb-1">Nome Completo</label><input type="text" required value={motNome} onChange={e => setMotNome(e.target.value)} className="w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#395D34] bg-gray-50 outline-none" /></div>
@@ -942,7 +1189,7 @@ export default function CadastroEstudante() {
           )}
 
           {currentView === 'motoristas_lista' && (
-             <div className="bg-white p-6 rounded-2xl shadow-sm border animate-in fade-in">
+             <div className="bg-white p-6 rounded-2xl shadow-sm border animate-in fade-in max-w-5xl mx-auto">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-xl font-bold text-[#0B2341]">Motoristas Ativos</h2>
                   <div className="relative w-64"><input type="text" placeholder="Buscar motorista..." value={buscaMotorista} onChange={(e) => setBuscaMotorista(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:border-[#0B2341] outline-none" /><Search className="absolute left-3 top-2.5 text-gray-400" size={16} /></div>
@@ -952,7 +1199,26 @@ export default function CadastroEstudante() {
                     <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nome</th><th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Contato</th><th className="px-6 py-3 text-center text-xs font-bold text-gray-500 uppercase">Ações</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {filterMotoristas.map((m) => (
-                        <tr key={m.id} className="hover:bg-gray-50"><td className="px-6 py-4 font-bold text-sm text-[#0B2341]">{m.nome}</td><td className="px-6 py-4 text-sm text-gray-700">CPF: {m.cpf}<br/><span className="text-xs text-gray-500">{m.telefone}</span></td><td className="px-6 py-4 text-center"><button onClick={() => {setMotEditId(m.id); setMotNome(m.nome); setMotCpf(m.cpf); setMotCnh(m.cnh); setMotTelefone(m.telefone); setCurrentView('motoristas_cad');}} className="text-blue-600 bg-blue-50 p-2 rounded-full mr-2"><Edit size={18} /></button><button onClick={() => {showConfirm('Deseja excluir este motorista?', async () => {await deleteDoc(doc(db, 'motoristas', m.id)); carregarDados();});}} className="text-[#890013] bg-red-50 p-2 rounded-full"><Trash2 size={18} /></button></td></tr>
+                        <tr key={m.id} className="hover:bg-gray-50 transition">
+                          <td className="px-6 py-4">
+                            <div className="font-bold text-sm text-[#0B2341]">{m.nome}</div>
+                            {m.uid_vinculado ? <span className="text-[10px] text-green-600 font-bold flex items-center mt-1"><KeyRound size={12} className="mr-1"/> Senha Cadastrada</span> : <span className="text-[10px] text-yellow-600 font-bold flex items-center mt-1"><AlertTriangle size={12} className="mr-1"/> Sem acesso ainda</span>}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-700">CPF: {m.cpf}<br/><span className="text-xs text-gray-500">{m.telefone}</span></td>
+                          <td className="px-6 py-4 text-center flex justify-center gap-2">
+                            {m.uid_vinculado && (
+                              <button onClick={() => handleZerarSenhaMotorista(m)} className="text-orange-600 bg-orange-50 hover:bg-orange-100 p-2 rounded-full transition shadow-sm" title="Zerar Senha de Acesso">
+                                <KeyRound size={18} />
+                              </button>
+                            )}
+                            <button onClick={() => {setMotEditId(m.id); setMotNome(m.nome); setMotCpf(m.cpf); setMotCnh(m.cnh); setMotTelefone(m.telefone); setCurrentView('motoristas_cad');}} className="text-blue-600 bg-blue-50 hover:bg-blue-100 p-2 rounded-full transition shadow-sm" title="Editar">
+                              <Edit size={18} />
+                            </button>
+                            <button onClick={() => {showConfirm('Deseja excluir este motorista?', async () => {await deleteDoc(doc(db, 'motoristas', m.id)); carregarDados();});}} className="text-[#890013] bg-red-50 hover:bg-red-100 p-2 rounded-full transition shadow-sm" title="Excluir">
+                              <Trash2 size={18} />
+                            </button>
+                          </td>
+                        </tr>
                       ))}
                     </tbody>
                   </table>
@@ -962,7 +1228,7 @@ export default function CadastroEstudante() {
 
           {/* =========== TELA: INSTITUIÇÕES =========== */}
           {currentView === 'instituicoes' && (
-             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in">
+             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in max-w-5xl mx-auto">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border h-fit">
                   <h2 className="text-lg font-bold text-[#0B2341] border-b pb-3 mb-4">Nova Instituição</h2>
                   <form onSubmit={handleSalvarInstituicao} className="space-y-4">
@@ -988,7 +1254,7 @@ export default function CadastroEstudante() {
 
           {/* =========== TELA: ROTAS =========== */}
           {currentView === 'rotas' && (
-             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in">
+             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in max-w-7xl mx-auto">
                 <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border h-fit">
                   <h2 className="text-lg font-bold text-[#0B2341] border-b pb-3 mb-4 flex justify-between">
                     {rotaEditId ? 'Editar Rota' : 'Nova Rota'}
@@ -997,7 +1263,7 @@ export default function CadastroEstudante() {
                   <form onSubmit={handleSalvarRota} className="space-y-4">
                     <div><label className="block text-sm font-semibold mb-1">Nome da Rota</label><input type="text" required value={rotaNome} onChange={e => setRotaNome(e.target.value)} className="w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#395D34] bg-gray-50 outline-none" /></div>
                     <div><label className="block text-sm font-semibold mb-1">Motorista</label><select required value={rotaMotoristaCpf} onChange={e => setRotaMotoristaCpf(e.target.value)} className="w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#395D34] bg-gray-50 outline-none"><option value="">Selecione...</option>{motoristas.map(m => <option key={m.id} value={m.cpf}>{m.nome}</option>)}</select></div>
-                    <div><label className="block text-sm font-semibold mb-1">Grupo WhatsApp (Opcional)</label><input type="url" value={whatsappRota} onChange={e => setWhatsappRota(e.target.value)} className="w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#395D34] bg-gray-50 outline-none" /></div>
+                    <div><label className="block text-sm font-semibold mb-1">Grupo WhatsApp</label><input type="url" value={whatsappRota} onChange={e => setWhatsappRota(e.target.value)} className="w-full rounded-lg border-gray-300 p-2.5 border focus:border-[#395D34] bg-gray-50 outline-none" /></div>
                     <button type="submit" disabled={loading} className="w-full bg-[#395D34] text-white py-3 rounded-lg font-bold shadow hover:bg-[#2c4928]">{rotaEditId ? 'Atualizar' : 'Salvar Rota'}</button>
                   </form>
                 </div>
@@ -1020,11 +1286,11 @@ export default function CadastroEstudante() {
         </div>
       </main>
 
-      {/* MODAL PARADAS ROTA */}
+      {/* MODAL PARADAS */}
       {modalParadasAberto && rotaSelecionadaParaParadas && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setModalParadasAberto(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
-            <div className="p-4 flex items-center justify-between bg-[#0B2341] text-white"><div className="flex items-center gap-2"><MapPin size={20} className="text-[#395D34]" /><h3 className="font-bold text-lg">Instituições da Rota</h3></div><button onClick={() => setModalParadasAberto(false)} className="text-white/80 hover:text-white p-1"><X size={24} /></button></div>
+            <div className="p-4 flex items-center justify-between bg-[#0B2341] text-white"><div className="flex items-center gap-2"><MapPin size={20} className="text-[#395D34]" /><h3 className="font-bold text-lg">Instituições da Rota</h3></div><button onClick={() => setModalParadasAberto(false)} className="text-white/80 hover:text-white"><X size={24} /></button></div>
             <div className="p-6 overflow-y-auto bg-gray-50 flex-1 space-y-4">
               <p className="text-sm font-bold text-gray-500 mb-2">Marque as instituições pertencentes à rota <strong>{rotaSelecionadaParaParadas.nome_rota}</strong>:</p>
               <div className="bg-white rounded-xl border border-gray-200 p-2 space-y-1">
@@ -1040,7 +1306,7 @@ export default function CadastroEstudante() {
         </div>
       )}
 
-      {/* OUTROS MODAIS (Documentos e Histórico - Mantidos idênticos logicamente mas estilizados) */}
+      {/* MODAL DOCUMENTOS */}
       {modalDocsAlunoAberto && alunoDocs && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setModalDocsAlunoAberto(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
@@ -1051,15 +1317,13 @@ export default function CadastroEstudante() {
                  {alunoDocs.documentos?.map(doc => (
                    <button key={doc.id} onClick={() => {fetch(doc.base64).then(res=>res.blob()).then(blob=>{const url=URL.createObjectURL(blob); window.open(url, '_blank');})}} className="w-full flex items-center justify-between bg-white border border-gray-200 p-4 rounded-xl shadow-sm hover:border-blue-400 group"><div className="flex items-center gap-3"><div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><FileText size={20} /></div><span className="font-bold text-gray-700">{doc.titulo}</span></div><Eye size={18} className="text-gray-400" /></button>
                  ))}
-                 {alunoDocs.documento_base64 && (!alunoDocs.documentos || alunoDocs.documentos.length === 0) && (
-                   <button onClick={() => {fetch(alunoDocs.documento_base64!).then(res=>res.blob()).then(blob=>{const url=URL.createObjectURL(blob); window.open(url, '_blank');})}} className="w-full flex items-center justify-between bg-white border border-gray-200 p-4 rounded-xl shadow-sm hover:border-purple-400 group"><div className="flex items-center gap-3"><div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><FileText size={20} /></div><span className="font-bold text-gray-700">Documento Antigo Original</span></div><Eye size={18} className="text-gray-400" /></button>
-                 )}
                </div>
             </div>
           </div>
         </div>
       )}
 
+      {/* MODAL HISTÓRICO */}
       {modalHistoricoAberto && alunoHistorico && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setModalHistoricoAberto(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>

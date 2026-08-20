@@ -1,11 +1,11 @@
 // src/pages/Motorista/ScannerMotorista.tsx
 import { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { doc, getDoc, collection, addDoc, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, getDocs, query, where, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { signOut } from 'firebase/auth';
-import { BusFront, CheckCircle, XCircle, LogOut, ScanLine, AlertTriangle, MapPin, Users, X, Clock, Map } from 'lucide-react';
+import { BusFront, CheckCircle, XCircle, LogOut, ScanLine, AlertTriangle, MapPin, Users, X, Clock, Map, MessageCircle } from 'lucide-react';
 
 interface EstudanteScan {
   id_estudante: string;
@@ -16,6 +16,7 @@ interface EstudanteScan {
   turno: string;
   rota_aluno: string;
   vencimento?: string;
+  telefone?: string;
 }
 
 export default function ScannerMotorista() {
@@ -25,8 +26,9 @@ export default function ScannerMotorista() {
   const roleStr = String(userAny?.role || '');
   const isFiscal = roleStr === 'fiscal' || roleStr === 'admin';
 
-  const [rotasDisponiveis, setRotasDisponiveis] = useState<string[]>([]);
-  const [rotaAtual, setRotaAtual] = useState('');
+  const [rotasDisponiveis, setRotasDisponiveis] = useState<{ id: string, nome: string }[]>([]);
+  const [rotaAtualId, setRotaAtualId] = useState('');
+  const [rotaAtualNome, setRotaAtualNome] = useState('');
   const [tipoViagem, setTipoViagem] = useState<'ida' | 'volta'>('ida');
   
   const [estudante, setEstudante] = useState<EstudanteScan | null>(null);
@@ -35,21 +37,31 @@ export default function ScannerMotorista() {
   const [estudantePendente, setEstudantePendente] = useState<{ dados: any, sentido: 'ida' | 'volta' } | null>(null);
   
   const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
+  
+  const [idsIdaHoje, setIdsIdaHoje] = useState<string[]>([]);
+  const [idsVoltaHoje, setIdsVoltaHoje] = useState<string[]>([]);
   const [alunosNaRota, setAlunosNaRota] = useState<any[]>([]);
-  const [embarcadosHoje, setEmbarcadosHoje] = useState<any[]>([]);
+  const [embarcadosHistorico, setEmbarcadosHistorico] = useState<any[]>([]);
+  
   const [showFaltantes, setShowFaltantes] = useState(false);
   const [showHistorico, setShowHistorico] = useState(false);
 
   const isProcessingRef = useRef(false);
   const coordsRef = useRef(coords);
-  const rotaAtualRef = useRef(rotaAtual);
+  const rotaAtualIdRef = useRef(rotaAtualId);
+  const rotaAtualNomeRef = useRef(rotaAtualNome);
   const tipoViagemRef = useRef(tipoViagem);
   const rotasDisponiveisRef = useRef(rotasDisponiveis);
+  const idsIdaHojeRef = useRef(idsIdaHoje);
+  const idsVoltaHojeRef = useRef(idsVoltaHoje);
 
   useEffect(() => { coordsRef.current = coords; }, [coords]);
-  useEffect(() => { rotaAtualRef.current = rotaAtual; }, [rotaAtual]);
+  useEffect(() => { rotaAtualIdRef.current = rotaAtualId; }, [rotaAtualId]);
+  useEffect(() => { rotaAtualNomeRef.current = rotaAtualNome; }, [rotaAtualNome]);
   useEffect(() => { tipoViagemRef.current = tipoViagem; }, [tipoViagem]);
   useEffect(() => { rotasDisponiveisRef.current = rotasDisponiveis; }, [rotasDisponiveis]);
+  useEffect(() => { idsIdaHojeRef.current = idsIdaHoje; }, [idsIdaHoje]);
+  useEffect(() => { idsVoltaHojeRef.current = idsVoltaHoje; }, [idsVoltaHoje]);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -61,28 +73,26 @@ export default function ScannerMotorista() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // Busca ultra robusta das rotas do motorista logado
   useEffect(() => {
     const buscarRotas = async () => {
       if (!user) return;
       try {
-        let listaRotasSet = new Set<string>();
+        let listaRotasMap: { id: string, nome: string }[] = [];
 
         if (isFiscal) {
           const snap = await getDocs(collection(db, 'rotas'));
           snap.docs.forEach(d => {
-            const nome = d.data().nome_rota || d.data().nome;
-            if (nome) listaRotasSet.add(String(nome).trim());
+            const data = d.data();
+            const nome = data.nome_rota || data.nome;
+            if (nome) listaRotasMap.push({ id: d.id, nome: String(nome).trim() });
           });
         } else {
-          // Descobre o CPF e Email do motorista logado de forma abrangente
           let cpfsPossiveis = new Set<string>();
           let emailsPossiveis = new Set<string>();
 
           if (userAny?.cpf) cpfsPossiveis.add(String(userAny.cpf).replace(/\D/g, ''));
           if (user?.email) emailsPossiveis.add(String(user.email).trim().toLowerCase());
 
-          // Tenta buscar o perfil do usuário nas coleções do Firestore caso o auth state venha incompleto
           if (user?.uid) {
             try {
               const userDocRef = await getDoc(doc(db, 'users', user.uid));
@@ -103,7 +113,6 @@ export default function ScannerMotorista() {
             } catch (e) { /* ignora */ }
           }
 
-          // Busca todas as rotas e compara limpando qualquer máscara (ex: "11111111111" ou "111.111.111-11")
           const snapRotas = await getDocs(collection(db, 'rotas'));
           snapRotas.docs.forEach(d => {
             const data = d.data();
@@ -121,15 +130,17 @@ export default function ScannerMotorista() {
               });
 
               if (atrelado) {
-                listaRotasSet.add(String(nomeRota).trim());
+                listaRotasMap.push({ id: d.id, nome: String(nomeRota).trim() });
               }
             }
           });
         }
 
-        const listaFinal = Array.from(listaRotasSet);
-        setRotasDisponiveis(listaFinal);
-        if (listaFinal.length > 0) setRotaAtual(listaFinal[0]);
+        setRotasDisponiveis(listaRotasMap);
+        if (listaRotasMap.length > 0) {
+          setRotaAtualId(listaRotasMap[0].id);
+          setRotaAtualNome(listaRotasMap[0].nome);
+        }
       } catch (error) {
         console.error("Erro ao buscar rotas", error);
       }
@@ -137,39 +148,84 @@ export default function ScannerMotorista() {
     buscarRotas();
   }, [user, isFiscal, userAny]);
 
-  // Carrega os embarques do dia considerando o sentido atual (Ida ou Volta)
+  // CARREGAR DADOS E OUVINTE EM TEMPO REAL (ONSNAPSHOT)
   useEffect(() => {
-    const carregarControleDeEmbarque = async () => {
-      if (!rotaAtual) return;
+    let unsubscribeDiario: () => void;
+
+    const carregarControleDiario = async () => {
+      if (!rotaAtualId || !rotaAtualNome) return;
       try {
+        // Carrega alunos da Rota apenas uma vez
         const snapEstudantes = await getDocs(collection(db, 'estudantes'));
-        const rotaLimpa = rotaAtual.trim().toLowerCase();
-        
-        const alunosFiltrados = snapEstudantes.docs
-          .map(d => d.data())
-          .filter((a: any) => String(a.rota || '').trim().toLowerCase() === rotaLimpa);
+        const rotaLimpa = rotaAtualNome.trim().toLowerCase();
+        const alunosFiltrados = snapEstudantes.docs.map(d => {
+          const data = d.data() as any;
+          return {
+            ...data,
+            id_estudante: String(data.id_estudante || d.id).trim()
+          };
+        }).filter((a: any) => String(a.rota || '').trim().toLowerCase() === rotaLimpa);
         
         setAlunosNaRota(alunosFiltrados);
 
-        const hoje = new Date();
-        hoje.setHours(0, 0, 0, 0);
-        
+        // Define a Referência do Documento Diário
+        const hojeStr = new Date().toISOString().split('T')[0];
+        const docIdDiario = `${hojeStr}_${rotaAtualNome.replace(/\s+/g, '_')}`;
+        const diarioRef = doc(db, 'embarques_diarios', docIdDiario);
+
+        // OUVINTE EM TEMPO REAL
+        unsubscribeDiario = onSnapshot(diarioRef, async (diarioSnap) => {
+          if (diarioSnap.exists()) {
+            const dados = diarioSnap.data();
+            const ultimaAtualizacao = dados.ultima_atualizacao?.toDate ? dados.ultima_atualizacao.toDate() : null;
+
+            const agora = new Date();
+            let expirado = true;
+            if (ultimaAtualizacao) {
+              const diffHoras = Math.abs(agora.getTime() - ultimaAtualizacao.getTime()) / 36e5;
+              const mesmoDia = agora.toDateString() === ultimaAtualizacao.toDateString();
+              if (diffHoras < 12 && mesmoDia) {
+                expirado = false;
+              }
+            }
+
+            if (expirado) {
+              setIdsIdaHoje([]);
+              setIdsVoltaHoje([]);
+              await deleteDoc(diarioRef);
+            } else {
+              setIdsIdaHoje((dados.ids_ida || []).map((id: any) => String(id).trim()));
+              setIdsVoltaHoje((dados.ids_volta || []).map((id: any) => String(id).trim()));
+            }
+          } else {
+            setIdsIdaHoje([]);
+            setIdsVoltaHoje([]);
+          }
+        });
+
+        // Carrega Histórico Base
+        const inicioDia = new Date();
+        inicioDia.setHours(0, 0, 0, 0);
         const qHist = query(
           collection(db, 'historico_viagens'),
-          where('id_rota_onibus', '==', rotaAtual),
-          where('tipo_viagem', '==', tipoViagem),
-          where('data_hora', '>=', hoje)
+          where('id_rota_onibus', '==', rotaAtualNome),
+          where('data_hora', '>=', inicioDia)
         );
         const snapHist = await getDocs(qHist);
-        
-        const historicoHoje = snapHist.docs.map(d => ({ id: d.id, ...d.data() }));
-        setEmbarcadosHoje(historicoHoje);
-      } catch (error) {
-        console.error("Erro ao carregar controle:", error);
+        setEmbarcadosHistorico(snapHist.docs.map(d => ({ id: d.id, ...d.data() })));
+
+      } catch (e) {
+        console.error("Erro ao carregar controle diário:", e);
       }
     };
-    carregarControleDeEmbarque();
-  }, [rotaAtual, tipoViagem]);
+    
+    carregarControleDiario();
+
+    // Limpa o ouvinte ao desmontar
+    return () => {
+      if (unsubscribeDiario) unsubscribeDiario();
+    };
+  }, [rotaAtualId, rotaAtualNome]);
 
   const registrarViagem = async (dadosEstudante: any, sentido: 'ida' | 'volta', isExata: boolean) => {
     let linkMaps = '';
@@ -177,12 +233,14 @@ export default function ScannerMotorista() {
       linkMaps = `https://www.google.com/maps?q=${coordsRef.current.lat},${coordsRef.current.lng}`;
     }
 
-    const novoEmbarque = {
-      id_estudante: dadosEstudante.id_estudante,
+    const idEstudanteLimpo = String(dadosEstudante.id_estudante || '').trim();
+
+    const novoEmbarqueHistorico = {
+      id_estudante: idEstudanteLimpo,
       nome_estudante: dadosEstudante.nome,
       id_motorista: user?.uid || '',
       nome_motorista: userAny?.nome || user?.email || '',
-      id_rota_onibus: rotaAtualRef.current, 
+      id_rota_onibus: rotaAtualNomeRef.current, 
       rota_original_aluno: dadosEstudante.rota, 
       tipo_viagem: sentido,
       data_hora: new Date(),
@@ -192,14 +250,40 @@ export default function ScannerMotorista() {
     };
 
     try {
-      const docRef = await addDoc(collection(db, 'historico_viagens'), novoEmbarque);
-      setEmbarcadosHoje(prev => [{ id: docRef.id, ...novoEmbarque }, ...prev]);
+      const docRef = await addDoc(collection(db, 'historico_viagens'), novoEmbarqueHistorico);
+      setEmbarcadosHistorico(prev => [{ id: docRef.id, ...novoEmbarqueHistorico }, ...prev]);
     } catch (e) {
-      console.error("Erro ao salvar histórico", e);
+      console.error("Erro ao salvar histórico oficial", e);
+    }
+
+    // A matriz local é atualizada pela função para garantir resiliência, 
+    // mas o onSnapshot garantirá a sincronização com a UI em seguida
+    let novasIdas = [...idsIdaHoje];
+    let novasVoltas = [...idsVoltaHoje];
+
+    if (sentido === 'ida') {
+      if (!novasIdas.includes(idEstudanteLimpo)) novasIdas.push(idEstudanteLimpo);
+    } else {
+      if (!novasVoltas.includes(idEstudanteLimpo)) novasVoltas.push(idEstudanteLimpo);
+    }
+
+    try {
+      const hojeStr = new Date().toISOString().split('T')[0];
+      const docIdDiario = `${hojeStr}_${rotaAtualNomeRef.current.replace(/\s+/g, '_')}`;
+      const diarioRef = doc(db, 'embarques_diarios', docIdDiario);
+
+      await setDoc(diarioRef, {
+        rota: rotaAtualNomeRef.current,
+        ids_ida: novasIdas,
+        ids_volta: novasVoltas,
+        ultima_atualizacao: new Date()
+      }, { merge: true });
+    } catch (e) {
+      console.error("Erro ao salvar na coleção embarques_diarios:", e);
     }
 
     setEstudante({
-      id_estudante: dadosEstudante.id_estudante,
+      id_estudante: idEstudanteLimpo,
       nome: dadosEstudante.nome,
       foto_url: dadosEstudante.foto_url,
       instituicao: dadosEstudante.instituicao_destino || '-',
@@ -223,7 +307,9 @@ export default function ScannerMotorista() {
   useEffect(() => {
     const readerId = "qr-reader-container";
     const html5QrCode = new Html5Qrcode(readerId);
-    const config = { fps: 10, qrbox: { width: 180, height: 180 } };
+    
+    // Força a caixa ser quadrada
+    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
 
     const qrCodeSuccessCallback = async (decodedText: string) => {
       if (isProcessingRef.current) return;
@@ -234,7 +320,36 @@ export default function ScannerMotorista() {
         const estudanteSnap = await getDoc(doc(db, 'estudantes', decodedText));
 
         if (estudanteSnap.exists()) {
-          const dadosEstudante = estudanteSnap.data();
+          const dadosBrutos = estudanteSnap.data() as any;
+          const idEstudante = String(dadosBrutos.id_estudante || decodedText).trim();
+          const dadosEstudante: any = { ...dadosBrutos, id_estudante: idEstudante };
+          const sentidoAtual = tipoViagemRef.current;
+
+          const jaEmbarcouNesteSentido = sentidoAtual === 'ida' 
+            ? idsIdaHojeRef.current.includes(idEstudante) 
+            : idsVoltaHojeRef.current.includes(idEstudante);
+
+          if (jaEmbarcouNesteSentido) {
+            setEstudante({
+              id_estudante: idEstudante,
+              nome: dadosEstudante.nome,
+              foto_url: dadosEstudante.foto_url,
+              instituicao: dadosEstudante.instituicao_destino || '-',
+              curso: dadosEstudante.curso || '-',
+              turno: dadosEstudante.turno || '-',
+              rota_aluno: dadosEstudante.rota || '-',
+              vencimento: dadosEstudante.data_vencimento
+            });
+            setStatus('error');
+            setMensagem(`ATENÇÃO: Aluno já embarcou na ${sentidoAtual.toUpperCase()} hoje!`);
+            setTimeout(() => {
+              setStatus('idle');
+              setEstudante(null);
+              setMensagem('');
+              isProcessingRef.current = false;
+            }, 3000);
+            return;
+          }
 
           const hoje = new Date();
           hoje.setHours(0, 0, 0, 0);
@@ -252,17 +367,16 @@ export default function ScannerMotorista() {
             return;
           }
 
-          const sentidoCalculado = tipoViagemRef.current;
           const rotaAlunoLimpa = String(dadosEstudante.rota || '').trim().toLowerCase();
-          const rotaAtualLimpa = String(rotaAtualRef.current || '').trim().toLowerCase();
-          const listaRotasMotorista = rotasDisponiveisRef.current.map(r => r.trim().toLowerCase());
+          const rotaAtualLimpa = String(rotaAtualNomeRef.current || '').trim().toLowerCase();
+          const listaRotasMotorista = rotasDisponiveisRef.current.map(r => r.nome.trim().toLowerCase());
           
           const isRotaExata = isFiscal || rotaAlunoLimpa === rotaAtualLimpa || listaRotasMotorista.includes(rotaAlunoLimpa);
 
           if (isRotaExata) {
-            await registrarViagem(dadosEstudante, sentidoCalculado, true);
+            await registrarViagem(dadosEstudante, sentidoAtual, true);
           } else {
-            setEstudantePendente({ dados: dadosEstudante, sentido: sentidoCalculado });
+            setEstudantePendente({ dados: dadosEstudante, sentido: sentidoAtual });
             setStatus('confirmacao');
           }
         } else {
@@ -319,12 +433,31 @@ export default function ScannerMotorista() {
     }, 2000);
   };
 
-  const idsEmbarcados = new Set(embarcadosHoje.map(e => e.id_estudante));
-  const alunosFaltantes = alunosNaRota.filter(a => !idsEmbarcados.has(a.id_estudante));
+  // CÁLCULO DE FALTANTES (Apenas para a Volta, baseado em quem foi na Ida)
+  let alunosFaltantes: any[] = [];
+  if (tipoViagem === 'volta') {
+    const idsQueForamNaIda = new Set(idsIdaHoje.map(id => String(id).trim()));
+    const idsJaLidosVolta = new Set(idsVoltaHoje.map(id => String(id).trim()));
+    
+    // Pega os alunos da rota que FORAM na ida, mas que AINDA NÃO retornaram
+    const alunosParaVoltar = alunosNaRota.filter(a => idsQueForamNaIda.has(String(a.id_estudante).trim()));
+    alunosFaltantes = alunosParaVoltar.filter(a => !idsJaLidosVolta.has(String(a.id_estudante).trim()));
+  }
+
+  const embarcadosSentidoAtual = embarcadosHistorico.filter((h: any) => h.tipo_viagem === tipoViagem);
 
   return (
     <div className="h-[100dvh] w-full bg-gray-50 text-gray-800 flex flex-col font-sans overflow-hidden">
       
+      {/* Estilos Globais forçados para a câmera quadrada do Html5Qrcode */}
+      <style>{`
+        #qr-reader-container video {
+          object-fit: cover !important;
+          width: 100% !important;
+          height: 100% !important;
+        }
+      `}</style>
+
       <nav className="shrink-0 bg-[#0B2341] text-white px-4 py-3 flex justify-between items-center shadow-md z-10">
         <div className="flex items-center">
           <div className="bg-white/10 p-1.5 rounded-lg mr-2.5"><BusFront size={20} className="text-white" /></div>
@@ -350,20 +483,29 @@ export default function ScannerMotorista() {
           <div className="flex gap-2">
             <div className="flex-1">
               <select 
-                value={rotaAtual} 
-                onChange={e => setRotaAtual(e.target.value)}
+                value={rotaAtualId} 
+                onChange={e => {
+                  const rId = e.target.value;
+                  const encontrada = rotasDisponiveis.find(r => r.id === rId);
+                  setRotaAtualId(rId);
+                  if (encontrada) setRotaAtualNome(encontrada.nome);
+                }}
                 className="w-full bg-gray-50 border border-gray-300 rounded-lg p-2 text-sm font-bold text-[#0B2341] outline-none"
               >
-                {rotasDisponiveis.length === 0 ? <option value="">Sem rotas atreladas</option> : rotasDisponiveis.map(r => <option key={r} value={r}>{r}</option>)}
+                {rotasDisponiveis.length === 0 ? <option value="">Sem rotas atreladas</option> : rotasDisponiveis.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
               </select>
             </div>
-            <button 
-              onClick={() => setShowFaltantes(true)}
-              className="bg-orange-50 border border-orange-200 text-orange-700 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 shadow-sm active:bg-orange-100"
-            >
-              <Users size={14} className="mr-1.5" />
-              Faltam: {alunosFaltantes.length}
-            </button>
+            
+            {/* O botão "Faltam" só aparece se for Volta */}
+            {tipoViagem === 'volta' && (
+              <button 
+                onClick={() => setShowFaltantes(true)}
+                className="bg-orange-50 border border-orange-200 text-orange-700 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 shadow-sm active:bg-orange-100"
+              >
+                <Users size={14} className="mr-1.5" />
+                Faltam: {alunosFaltantes.length}
+              </button>
+            )}
           </div>
 
           <div className="flex gap-2 items-center h-9">
@@ -374,8 +516,12 @@ export default function ScannerMotorista() {
           </div>
         </div>
 
-        <div className="flex-1 bg-black relative flex flex-col justify-center items-center overflow-hidden w-full h-full">
-          <div id="qr-reader-container" className="w-full h-full max-h-[50vh] flex items-center justify-center"></div>
+        <div className="flex-1 bg-black relative flex flex-col justify-center items-center overflow-hidden w-full h-full p-4">
+          
+          {/* Container Quadrado Perfeito (Aspect-Square) */}
+          <div className="w-full max-w-[280px] aspect-square bg-gray-900 rounded-3xl overflow-hidden border-4 border-white/10 shadow-2xl relative flex items-center justify-center">
+             <div id="qr-reader-container" className="absolute inset-0 w-full h-full"></div>
+          </div>
 
           {status === 'loading' && (
             <div className="absolute inset-0 bg-[#0B2341]/90 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
@@ -450,7 +596,7 @@ export default function ScannerMotorista() {
             <div className="bg-orange-50 p-4 flex items-center justify-between border-b border-orange-200 shrink-0">
               <div className="flex items-center text-orange-800">
                 <Users size={20} className="mr-2" />
-                <h3 className="font-bold text-sm">Faltam Embarcar na {tipoViagem} ({alunosFaltantes.length})</h3>
+                <h3 className="font-bold text-sm">Faltam Voltar ({alunosFaltantes.length})</h3>
               </div>
               <button onClick={() => setShowFaltantes(false)} className="text-orange-800/60 hover:text-orange-900 p-1"><X size={20} /></button>
             </div>
@@ -462,19 +608,39 @@ export default function ScannerMotorista() {
                 </div>
               ) : (
                 <ul className="divide-y divide-gray-100">
-                  {alunosFaltantes.map(aluno => (
-                    <li key={aluno.id_estudante || Math.random().toString()} className="p-3 flex items-center bg-white hover:bg-gray-50 transition">
-                      <div className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden mr-3 shrink-0">
-                        {aluno.foto_url ? <img src={aluno.foto_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400"><Users size={16}/></div>}
-                      </div>
-                      <div className="flex-1 overflow-hidden">
-                        <p className="text-sm font-bold text-[#0B2341] truncate leading-tight">{aluno.nome}</p>
-                        <p className="text-[10px] text-gray-500 font-medium truncate flex items-center mt-0.5">
-                          <MapPin size={10} className="mr-1 text-gray-400"/> {aluno.instituicao_destino || 'Sem Instituição'}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
+                  {alunosFaltantes.map(aluno => {
+                    // Prepara o link do Whatsapp caso o aluno tenha telefone
+                    const phoneClean = aluno.telefone ? aluno.telefone.replace(/\D/g, '') : '';
+                    const linkWhats = phoneClean ? `https://wa.me/55${phoneClean}?text=Olá ${aluno.nome.split(' ')[0]}, o ônibus da volta está te aguardando!` : null;
+
+                    return (
+                      <li key={aluno.id_estudante || Math.random().toString()} className="p-3 flex items-center justify-between bg-white hover:bg-gray-50 transition">
+                        <div className="flex items-center flex-1 overflow-hidden mr-2">
+                          <div className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden mr-3 shrink-0">
+                            {aluno.foto_url ? <img src={aluno.foto_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400"><Users size={16}/></div>}
+                          </div>
+                          <div className="flex-1 overflow-hidden">
+                            <p className="text-sm font-bold text-[#0B2341] truncate leading-tight">{aluno.nome}</p>
+                            <p className="text-[10px] text-gray-500 font-medium truncate flex items-center mt-0.5">
+                              <MapPin size={10} className="mr-1 text-gray-400"/> {aluno.instituicao_destino || 'Sem Instituição'}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        {linkWhats && (
+                          <a 
+                            href={linkWhats}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#25D366] bg-[#25D366]/10 p-2.5 rounded-full hover:bg-[#25D366]/20 transition shrink-0"
+                            title="Avisar no WhatsApp"
+                          >
+                            <MessageCircle size={18} />
+                          </a>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -488,18 +654,18 @@ export default function ScannerMotorista() {
             <div className="bg-[#0B2341] p-4 flex items-center justify-between border-b shrink-0">
               <div className="flex items-center text-white">
                 <Clock size={20} className="mr-2" />
-                <h3 className="font-bold text-sm">Últimos Embarques ({embarcadosHoje.length})</h3>
+                <h3 className="font-bold text-sm">Últimos Embarques ({embarcadosSentidoAtual.length})</h3>
               </div>
               <button onClick={() => setShowHistorico(false)} className="text-white/60 hover:text-white p-1"><X size={20} /></button>
             </div>
             <div className="p-0 overflow-y-auto flex-1 bg-gray-50">
-              {embarcadosHoje.length === 0 ? (
+              {embarcadosSentidoAtual.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
-                  <p className="text-sm font-medium">Nenhum aluno embarcou ainda.</p>
+                  <p className="text-sm font-medium">Nenhum aluno embarcou ainda nesta categoria.</p>
                 </div>
               ) : (
                 <ul className="divide-y divide-gray-100">
-                  {embarcadosHoje.map(registro => (
+                  {embarcadosSentidoAtual.map((registro: any) => (
                     <li key={registro.id || Math.random().toString()} className="p-3 flex flex-col bg-white">
                       <div className="flex justify-between items-start mb-2">
                         <p className="text-sm font-bold text-[#0B2341] truncate leading-tight flex-1 mr-2">{registro.nome_estudante}</p>
