@@ -25,8 +25,15 @@ export default function Login() {
   const { user } = useAuth();
   const { showAlert } = useAlert();
 
-  // Redirecionamento inteligente
+  // Redirecionamento inteligente + Bypass Offline para o PWA abrir direto na carteirinha
   useEffect(() => {
+    // Verifica se existe cache de estudante no aparelho (modo offline instantâneo)
+    const cachedKey = Object.keys(localStorage).find(k => k.startsWith('cache_estudante_'));
+    if (cachedKey) {
+      navigate('/minha-carteira');
+      return;
+    }
+
     if (user) {
       const roleStr = String((user as any).role || '');
       if (roleStr === 'admin') navigate('/admin');
@@ -58,13 +65,11 @@ export default function Login() {
       const cpfLimpo = cpfMotorista.replace(/\D/g, '');
       const fakeEmail = `${cpfLimpo}@motorista.com`; // Truque para usar o Firebase Auth nativo
       
-      // Verifica se o motorista existe no banco de dados (coleção motoristas)
       let motRef = doc(db, 'motoristas', cpfLimpo);
       let motSnap = await getDoc(motRef);
       let motoristaData = motSnap.exists() ? motSnap.data() : null;
 
       if (!motoristaData) {
-        // Busca flexível caso o ID não seja o CPF
         const q = query(collection(db, 'motoristas'), where('cpf', '==', cpfLimpo));
         const qSnap = await getDocs(q);
         if (!qSnap.empty) {
@@ -78,11 +83,9 @@ export default function Login() {
         return showAlert('Motorista não cadastrado. Procure a administração.', 'error');
       }
 
-      // Se o motorista não tiver um UID atrelado, é o PRIMEIRO ACESSO (Cria a conta)
       if (!motoristaData.uid_vinculado) {
         const cred = await createUserWithEmailAndPassword(auth, fakeEmail, senhaMotorista);
         
-        // Salva na coleção Users
         await setDoc(doc(db, 'users', cred.user.uid), {
           uid: cred.user.uid,
           email: fakeEmail,
@@ -92,13 +95,11 @@ export default function Login() {
           criadoEm: new Date()
         });
 
-        // Atualiza a ficha do motorista
         await updateDoc(motRef, { uid_vinculado: cred.user.uid });
 
         showAlert('Senha criada com sucesso! Acesso liberado.', 'success');
         window.location.reload();
       } else {
-        // JÁ POSSUI CONTA, FAZ LOGIN NORMAL
         try {
           await signInWithEmailAndPassword(auth, fakeEmail, senhaMotorista);
           showAlert('Acesso liberado!', 'success');
@@ -134,7 +135,6 @@ export default function Login() {
 
       if (userSnap.exists() && userSnap.data().role) return;
 
-      // Verifica se é Admin ou Fiscal na whitelist
       if (firebaseUser.email) {
         const emailLower = firebaseUser.email.trim().toLowerCase();
         const authSnap = await getDocs(collection(db, 'usuarios_autorizados'));
@@ -180,14 +180,14 @@ export default function Login() {
       let roleEncontrada = '';
       let nomeFinal = usuarioPendenteGoogle.displayName || 'Usuário';
 
-      // 1. Busca Estudante
       const estRef = doc(db, 'estudantes', cpfLimpo);
       const estSnap = await getDoc(estRef);
       if (estSnap.exists()) {
         roleEncontrada = 'estudante';
         nomeFinal = estSnap.data().nome || nomeFinal;
+        // Salva o cache local no primeiro vínculo
+        localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(estSnap.data()));
       } else {
-        // 2. Busca Usuarios Autorizados (caso erro de email)
         const authSnap = await getDocs(collection(db, 'usuarios_autorizados'));
         authSnap.forEach(wDoc => {
           if (String(wDoc.data().cpf || '').replace(/\D/g, '') === cpfLimpo) {
@@ -267,7 +267,6 @@ export default function Login() {
           </div>
         )}
 
-        {/* ----------------- TELA DO ESTUDANTE / ADMIN ----------------- */}
         {tipoAcesso === 'estudante' && !etapaCpfGoogle && (
           <div className="w-full animate-in slide-in-from-right-4">
             <button onClick={() => setTipoAcesso('escolha')} className="text-[#890013] text-xs font-bold mb-4 flex items-center hover:underline">
@@ -301,7 +300,6 @@ export default function Login() {
           </form>
         )}
 
-        {/* ----------------- TELA DO MOTORISTA ----------------- */}
         {tipoAcesso === 'motorista' && (
           <form onSubmit={handleLoginMotorista} className="w-full space-y-4 animate-in slide-in-from-right-4">
             <button type="button" onClick={() => setTipoAcesso('escolha')} className="text-[#890013] text-xs font-bold mb-2 flex items-center hover:underline">

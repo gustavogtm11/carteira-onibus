@@ -2,7 +2,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-// Importação das páginas (Vamos criá-las em seguida)
+// Importação das páginas
 import Login from '../pages/Login';
 import DashboardAdmin from '../pages/Admin/DashboardAdmin';
 import CadastroEstudante from '../pages/Cadastro/CadastroEstudante';
@@ -14,7 +14,13 @@ import type { JSX } from 'react/jsx-runtime';
 const PrivateRoute = ({ children, allowedRoles }: { children: JSX.Element, allowedRoles: string[] }) => {
   const { user, loading } = useAuth();
 
-  if (loading) return <div className="flex h-screen items-center justify-center">Carregando...</div>;
+  // Se estivermos offline ou com cache de estudante, libera o acesso imediato à carteira sem travar no loading do Firebase
+  const temCacheEstudante = Object.keys(localStorage).some(k => k.startsWith('cache_estudante_'));
+  if (allowedRoles.includes('estudante') && temCacheEstudante) {
+    return children;
+  }
+
+  if (loading) return <div className="flex h-screen items-center justify-center font-bold text-[#0B2341]">Carregando...</div>;
   if (!user) return <Navigate to="/" />;
   if (!allowedRoles.includes(user.role || '')) return <Navigate to="/unauthorized" />;
 
@@ -22,10 +28,14 @@ const PrivateRoute = ({ children, allowedRoles }: { children: JSX.Element, allow
 };
 
 export default function AppRoutes() {
+  // Verifica se existe cache de estudante no aparelho logo na abertura
+  const temCacheEstudante = Object.keys(localStorage).some(k => k.startsWith('cache_estudante_'));
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Login />} />
+        {/* Se já tiver cache de estudante no celular, a rota raiz '/' joga direto para a carteirinha instantaneamente */}
+        <Route path="/" element={temCacheEstudante ? <Navigate to="/minha-carteira" replace /> : <Login />} />
 
         {/* Rotas de Admin */}
         <Route path="/admin" element={
