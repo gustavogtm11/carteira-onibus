@@ -60,8 +60,22 @@ export default function CarteiraDigital() {
 
   useEffect(() => {
     const buscarDados = async () => {
-      if (!user) return;
       try {
+        // Se estiver offline ou sem objeto user do Auth, tenta buscar direto do cache do aparelho
+        if (!user) {
+          const cachedKey = Object.keys(localStorage).find(k => k.startsWith('cache_estudante_'));
+          if (cachedKey) {
+            const cachedData = localStorage.getItem(cachedKey);
+            if (cachedData) {
+              setEstudante(JSON.parse(cachedData));
+              setLoading(false);
+              return;
+            }
+          }
+          setLoading(false);
+          return;
+        }
+
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
         
@@ -98,13 +112,12 @@ export default function CarteiraDigital() {
           }
         }
       } catch (error) {
-        console.warn("Sem conexão. Tentando carregar dados do cache local...");
+        console.warn("Sem conexão com o Firebase. Tentando carregar dados do cache local...");
         const cachedKey = Object.keys(localStorage).find(k => k.startsWith('cache_estudante_'));
         if (cachedKey) {
           const cachedData = localStorage.getItem(cachedKey);
           if (cachedData) {
             setEstudante(JSON.parse(cachedData));
-            showAlert('Modo Offline: Exibindo dados salvos no aparelho.', 'info');
           }
         }
       } finally {
@@ -574,7 +587,7 @@ export default function CarteiraDigital() {
                     <div key={viagem.id} className="flex flex-col p-3 bg-gray-50 rounded-xl border border-gray-100 hover:bg-white transition-colors">
                       <div className="flex items-center justify-between w-full">
                         <div className="flex items-center">
-                          <div className={`p-2 rounded-xl mr-3 ${viagem.tipo_viagem === 'ida' ? 'bg-[#395D34]/10 text-[#395D34]' : 'bg-[#0B2341]/10 text-[#0B2341]'}`}>
+                          <div className={`p-2 rounded-xl mr-3 ${viagem.tipo_viagem === 'ida' ? 'bg-[#395D34]/10 text-[#395D34]' : 'bg-[#0B2341]/10 text-[#0B2341]'}` }>
                             {viagem.tipo_viagem === 'ida' ? <MapPin size={16} /> : <Bus size={16} />}
                           </div>
                           <div>
