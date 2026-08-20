@@ -80,6 +80,7 @@ export default function CarteiraDigital() {
           if (estudanteSnap.exists()) {
             const dadosAluno = estudanteSnap.data() as EstudanteDados;
             setEstudante(dadosAluno);
+            localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(dadosAluno));
 
             await setDoc(userRef, {
               uid: user.uid,
@@ -97,7 +98,15 @@ export default function CarteiraDigital() {
           }
         }
       } catch (error) {
-        console.error("Erro ao buscar dados:", error);
+        console.warn("Sem conexão. Tentando carregar dados do cache local...");
+        const cachedKey = Object.keys(localStorage).find(k => k.startsWith('cache_estudante_'));
+        if (cachedKey) {
+          const cachedData = localStorage.getItem(cachedKey);
+          if (cachedData) {
+            setEstudante(JSON.parse(cachedData));
+            showAlert('Modo Offline: Exibindo dados salvos no aparelho.', 'info');
+          }
+        }
       } finally {
         setLoading(false);
       }
@@ -194,6 +203,7 @@ export default function CarteiraDigital() {
       
       if (estudanteSnap.exists()) {
         const dadosAluno = estudanteSnap.data() as EstudanteDados;
+        localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(dadosAluno));
         
         await setDoc(doc(db, 'users', user.uid), {
           uid: user.uid,
@@ -288,7 +298,6 @@ export default function CarteiraDigital() {
   return (
     <div className={`h-[100dvh] bg-gray-100 flex flex-col font-sans overflow-hidden ${modoImpressao ? 'print:bg-white print:overflow-visible' : ''}`}>
       
-      {/* ================= ESTILOS GLOBAIS DE IMPRESSÃO (Sem bordas, ocupa 100%) ================= */}
       <style>
         {`
           @media print {
@@ -298,14 +307,11 @@ export default function CarteiraDigital() {
         `}
       </style>
 
-      {/* ================= TELA DE IMPRESSÃO DA DECLARAÇÃO ================= */}
       {modoImpressao && declaracaoAtiva && (
         <div className="hidden print:block w-full min-h-screen bg-white m-0 p-0 absolute top-0 left-0 z-[99999]">
           <img src="/timbre.png" alt="Timbre" className="w-full h-auto object-cover m-0 p-0 block" />
-          
           <div className="p-12 text-justify text-gray-900 font-serif leading-relaxed text-lg" 
                dangerouslySetInnerHTML={{ __html: parseVariaveisDeclaracao(declaracaoAtiva.conteudoHtml) }} />
-          
           {declaracaoAtiva.assinatura_url && (
             <div className="mt-16 flex flex-col items-center justify-center w-full">
               <img src={declaracaoAtiva.assinatura_url} alt="Assinatura" className="h-24 w-auto object-contain mb-2" />
@@ -317,7 +323,6 @@ export default function CarteiraDigital() {
         </div>
       )}
 
-      {/* ================= MODAL VISUALIZAÇÃO DECLARAÇÃO (Antes de Imprimir) ================= */}
       {!modoImpressao && declaracaoAtiva && (
         <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in print:hidden">
           <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -355,7 +360,6 @@ export default function CarteiraDigital() {
         </div>
       )}
 
-      {/* ================= INTERFACE PRINCIPAL (Oculta na impressão) ================= */}
       <nav className="shrink-0 bg-[#0B2341] text-white p-4 flex justify-between items-center shadow-md z-10 print:hidden">
         <div className="flex items-center">
           <Bus size={22} className="mr-2 text-[#395D34]" />
@@ -404,7 +408,6 @@ export default function CarteiraDigital() {
                 </div>
               )}
               
-              {/* CARTÃO COM FLIP 3D CORRIGIDO PARA MOBILE/SAFARI */}
               <div 
                 className="w-full aspect-[1.58] bg-transparent cursor-pointer group relative"
                 style={{ perspective: '1000px' }}
@@ -414,19 +417,18 @@ export default function CarteiraDigital() {
                   className="relative w-full h-full transition-transform duration-700 shadow-2xl rounded-2xl"
                   style={{ 
                     transformStyle: 'preserve-3d', 
-                    WebkitTransformStyle: 'preserve-3d', // Correção para Safari/iOS
+                    WebkitTransformStyle: 'preserve-3d', 
                     transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)' 
                   }}
                 >
                   
-                  {/* ================= FRENTE DO CARTÃO ================= */}
                   <div 
                     className={`absolute inset-0 w-full h-full bg-gradient-to-br from-white via-gray-50 to-blue-50 rounded-2xl p-5 flex flex-col justify-between text-gray-800 overflow-hidden border-2 shadow-xl ${estaVencido ? 'border-[#890013]' : 'border-[#0B2341]/30'}`}
                     style={{ 
                       backfaceVisibility: 'hidden', 
-                      WebkitBackfaceVisibility: 'hidden', // Correção iOS
+                      WebkitBackfaceVisibility: 'hidden', 
                       backgroundColor: '#ffffff',
-                      zIndex: flipped ? 1 : 2 // Evita sobreposição bugada
+                      zIndex: flipped ? 1 : 2 
                     }}
                   >
                     <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
@@ -473,16 +475,15 @@ export default function CarteiraDigital() {
                     </div>
                   </div>
 
-                  {/* ================= VERSO DO CARTÃO ================= */}
                   <div 
                     className="absolute inset-0 w-full h-full bg-white rounded-2xl p-5 flex flex-col justify-between border-2 border-gray-200 shadow-xl text-gray-800"
                     style={{ 
                       backfaceVisibility: 'hidden', 
                       WebkitBackfaceVisibility: 'hidden', 
                       transform: 'rotateY(180deg)',
-                      WebkitTransform: 'rotateY(180deg)', // Correção iOS 
+                      WebkitTransform: 'rotateY(180deg)', 
                       backgroundColor: '#ffffff',
-                      zIndex: flipped ? 2 : 1 // Evita sobreposição bugada
+                      zIndex: flipped ? 2 : 1 
                     }}
                   >
                     <div className="flex w-full h-full">
@@ -519,9 +520,7 @@ export default function CarteiraDigital() {
                 </div>
               </div>
 
-              {/* Botões de Ações Dinâmicos */}
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                
                 <button 
                   onClick={handleSalvarCarteira}
                   className="w-full flex items-center justify-center gap-2 bg-[#0B2341] text-white py-3.5 rounded-xl font-bold hover:bg-[#071629] transition-colors shadow-md text-sm"
@@ -542,7 +541,6 @@ export default function CarteiraDigital() {
               </div>
             </div>
 
-            {/* SEÇÃO DE DECLARAÇÕES (Só aparece se tiver alguma cadastrada pra ele) */}
             {declaracoes.length > 0 && (
               <div className="bg-blue-50/50 rounded-2xl shadow-sm border border-blue-100 p-4 shrink-0">
                 <h3 className="font-bold text-[#0B2341] mb-3 flex items-center border-b border-blue-200 pb-2 text-sm uppercase tracking-wider">
@@ -563,7 +561,6 @@ export default function CarteiraDigital() {
               </div>
             )}
 
-            {/* HISTÓRICO DE VIAGENS */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col flex-1 min-h-[250px] mb-4">
               <h3 className="font-bold text-[#0B2341] mb-3 flex items-center border-b pb-2 text-sm uppercase tracking-wider shrink-0">
                 <Calendar size={18} className="mr-2 text-[#395D34]" /> Meu Histórico
