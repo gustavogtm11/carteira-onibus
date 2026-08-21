@@ -1,12 +1,13 @@
 // src/pages/Estudante/CarteiraDigital.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import QRCode from 'react-qr-code';
+import { useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { LogOut, Bus, Repeat, MapPin, Calendar, Download, AlertOctagon, MessageCircle, Map, FileText, Printer, X } from 'lucide-react';
+import { LogOut, Bus, Repeat, MapPin, Calendar, Download, AlertOctagon, MessageCircle, Map, FileText, Printer, X, ShieldCheck } from 'lucide-react';
 
 interface EstudanteDados {
   nome: string;
@@ -39,29 +40,57 @@ interface Declaracao {
   id: string;
   titulo: string;
   conteudoHtml: string;
-  assinatura_url?: string;
+  assinatura_url?: string | null;
+  assinatura_posicao?: { x: number; y: number };
+  timbre_base64?: string | null;
   rotas: string[];
 }
 
 export default function CarteiraDigital() {
   const { user } = useAuth();
   const { showAlert } = useAlert();
+  const navigate = useNavigate();
   
   const [estudante, setEstudante] = useState<EstudanteDados | null>(null);
   const [historico, setHistorico] = useState<Viagem[]>([]);
   const [whatsappRota, setWhatsappRota] = useState<string>('');
   const [declaracoes, setDeclaracoes] = useState<Declaracao[]>([]);
   const [declaracaoAtiva, setDeclaracaoAtiva] = useState<Declaracao | null>(null);
+  const [modalLgpdAberto, setModalLgpdAberto] = useState(false);
   
   const [cpfVinculo, setCpfVinculo] = useState('');
   const [loading, setLoading] = useState(true);
   const [flipped, setFlipped] = useState(false);
   const [modoImpressao, setModoImpressao] = useState(false);
 
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  const descriptografarCpf = (cpfDb: string): string => {
+    if (!cpfDb) return '';
+    try {
+      if (/^[A-Za-z0-9+/]+=*$/.test(cpfDb)) {
+        const decoded = atob(cpfDb);
+        if (/^\d{11}$/.test(decoded)) {
+          return decoded;
+        }
+      }
+    } catch {
+      // Ignora erro
+    }
+    return cpfDb.replace(/\D/g, '');
+  };
+
+  const formatarCPF = (cpf: string) => {
+    if (!cpf) return '';
+    let cpfLimpo = descriptografarCpf(cpf);
+    const numeros = cpfLimpo.replace(/\D/g, '');
+    if (numeros.length !== 11) return cpf;
+    return numeros.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  };
+
   useEffect(() => {
     const buscarDados = async () => {
       try {
-        // Se estiver offline ou sem objeto user do Auth, tenta buscar direto do cache do aparelho
         if (!user) {
           const cachedKey = Object.keys(localStorage).find(k => k.startsWith('cache_estudante_'));
           if (cachedKey) {
@@ -87,12 +116,26 @@ export default function CarteiraDigital() {
         }
 
         if (cpfEstudante) {
-          const cpfLimpo = cpfEstudante.replace(/\D/g, '');
-          const estudanteRef = doc(db, 'estudantes', cpfLimpo);
-          const estudanteSnap = await getDoc(estudanteRef);
+          const cpfLimpo = descriptografarCpf(cpfEstudante);
           
-          if (estudanteSnap.exists()) {
-            const dadosAluno = estudanteSnap.data() as EstudanteDados;
+          const qEstudante = query(collection(db, 'estudantes'), where('cpf_hash', '==', btoa(cpfLimpo)));
+          const snapEstudante = await getDocs(qEstudante);
+          
+          let estudanteDocId = cpfLimpo;
+          let dadosAluno: EstudanteDados | null = null;
+
+          if (!snapEstudante.empty) {
+            estudanteDocId = snapEstudante.docs[0].id;
+            dadosAluno = snapEstudante.docs[0].data() as EstudanteDados;
+          } else {
+            const estudanteRef = doc(db, 'estudantes', cpfLimpo);
+            const estudanteSnap = await getDoc(estudanteRef);
+            if (estudanteSnap.exists()) {
+              dadosAluno = estudanteSnap.data() as EstudanteDados;
+            }
+          }
+          
+          if (dadosAluno) {
             setEstudante(dadosAluno);
             localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(dadosAluno));
 
@@ -102,17 +145,17 @@ export default function CarteiraDigital() {
               nome: dadosAluno.nome,
               role: 'estudante',
               cpf: dadosAluno.cpf,
-              id_estudante: cpfLimpo,
+              id_estudante: estudanteDocId,
               atualizadoEm: new Date()
             }, { merge: true });
 
-            buscarHistorico(cpfLimpo);
+            buscarHistorico(estudanteDocId);
             buscarWhatsappDaRota(dadosAluno.rota);
             buscarDeclaracoes(dadosAluno.rota);
           }
         }
       } catch (error) {
-        console.warn("Sem conexão com o Firebase. Tentando carregar dados do cache local...");
+        console.warn("Sem conexão com o Firebase. Carregando do cache local...", error);
         const cachedKey = Object.keys(localStorage).find(k => k.startsWith('cache_estudante_'));
         if (cachedKey) {
           const cachedData = localStorage.getItem(cachedKey);
@@ -125,8 +168,19 @@ export default function CarteiraDigital() {
       }
     };
     buscarDados();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  const handleLogout = async () => {
+    try {
+      const chavesParaLimpar = Object.keys(localStorage).filter(k => k.startsWith('cache_estudante_'));
+      chavesParaLimpar.forEach(chave => localStorage.removeItem(chave));
+
+      await signOut(auth);
+      navigate('/'); 
+    } catch {
+      showAlert('Erro ao sair da conta.', 'error');
+    }
+  };
 
   const buscarWhatsappDaRota = async (nomeRota: string) => {
     if (!nomeRota) return;
@@ -153,10 +207,10 @@ export default function CarteiraDigital() {
       );
       const querySnapshot = await getDocs(q);
       
-      const viagens = querySnapshot.docs.map(doc => {
-        const data = doc.data();
+      const viagens = querySnapshot.docs.map(docItem => {
+        const data = docItem.data();
         return {
-          id: doc.id,
+          id: docItem.id,
           data_hora: data.data_hora,
           id_rota_onibus: data.id_rota_onibus,
           id_rota: data.id_rota,
@@ -176,10 +230,10 @@ export default function CarteiraDigital() {
       const snap = await getDocs(collection(db, 'declaracoes'));
       const lista: Declaracao[] = [];
       
-      snap.forEach(doc => {
-        const data = doc.data() as Declaracao;
+      snap.forEach(docItem => {
+        const data = docItem.data() as Declaracao;
         if (data.rotas && (data.rotas.includes(nomeRota) || data.rotas.includes('Todas'))) {
-          lista.push({ ...data, id: doc.id });
+          lista.push({ ...data, id: docItem.id });
         }
       });
       
@@ -198,12 +252,6 @@ export default function CarteiraDigital() {
     setCpfVinculo(value);
   };
 
-  const formatarCPF = (cpf: string) => {
-    if (!cpf) return '';
-    const cleanCPF = cpf.replace(/\D/g, '');
-    return cleanCPF.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-  };
-
   const handleVincularConta = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -211,11 +259,26 @@ export default function CarteiraDigital() {
     
     try {
       const cpfLimpo = cpfVinculo.replace(/\D/g, '');
-      const estudanteRef = doc(db, 'estudantes', cpfLimpo);
-      const estudanteSnap = await getDoc(estudanteRef);
+      const cpfHash = btoa(cpfLimpo);
       
-      if (estudanteSnap.exists()) {
-        const dadosAluno = estudanteSnap.data() as EstudanteDados;
+      const qEstudante = query(collection(db, 'estudantes'), where('cpf_hash', '==', cpfHash));
+      const snapEstudante = await getDocs(qEstudante);
+      
+      let estudanteDocId = cpfLimpo;
+      let dadosAluno: EstudanteDados | null = null;
+
+      if (!snapEstudante.empty) {
+        estudanteDocId = snapEstudante.docs[0].id;
+        dadosAluno = snapEstudante.docs[0].data() as EstudanteDados;
+      } else {
+        const estudanteRef = doc(db, 'estudantes', cpfLimpo);
+        const estudanteSnap = await getDoc(estudanteRef);
+        if (estudanteSnap.exists()) {
+          dadosAluno = estudanteSnap.data() as EstudanteDados;
+        }
+      }
+      
+      if (dadosAluno) {
         localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(dadosAluno));
         
         await setDoc(doc(db, 'users', user.uid), {
@@ -224,12 +287,12 @@ export default function CarteiraDigital() {
           nome: dadosAluno.nome,
           role: 'estudante',
           cpf: dadosAluno.cpf,
-          id_estudante: cpfLimpo,
+          id_estudante: estudanteDocId,
           atualizadoEm: new Date()
         }, { merge: true });
 
         setEstudante(dadosAluno);
-        buscarHistorico(cpfLimpo);
+        buscarHistorico(estudanteDocId);
         buscarWhatsappDaRota(dadosAluno.rota);
         buscarDeclaracoes(dadosAluno.rota);
         showAlert('Sua carteirinha foi vinculada com sucesso!', 'success');
@@ -254,20 +317,85 @@ export default function CarteiraDigital() {
     return `${primeiro} ${doMeio} ${ultimo}`;
   };
 
-  const handleSalvarCarteira = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'Minha Carteirinha Digital',
-          text: 'Passe Livre Estudantil - Prefeitura Municipal',
-          url: window.location.href,
-        });
-      } catch (error) {
-        console.error('Erro ao compartilhar', error);
-      }
-    } else {
-      showAlert("Para salvar, utilize a opção 'Adicionar à Tela de Início' no menu do seu navegador.", 'info');
+  const handleSalvarCarteira = () => {
+    if (!estudante) return;
+    
+    const janelaSalvar = window.open('', '_blank');
+    if (!janelaSalvar) {
+      showAlert('Permita pop-ups no navegador para salvar a carteirinha.', 'error');
+      return;
     }
+
+    const qrCodeSvg = document.getElementById('qr-code-export-container')?.innerHTML || '';
+
+    janelaSalvar.document.write(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Carteirinha - ${estudante.nome}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+      </head>
+      <body class="bg-gray-900 flex flex-col items-center justify-center min-h-screen p-4 font-sans text-white">
+        <div class="mb-4 text-center">
+          <h2 class="text-lg font-black text-white">Passe Livre Estudantil</h2>
+          <p class="text-xs text-gray-400">Tire um print ou segure na imagem para salvar na galeria do celular</p>
+        </div>
+        
+        <div class="w-full max-w-sm aspect-[1.58] bg-gradient-to-br from-white via-gray-50 to-blue-50 rounded-2xl p-4 flex flex-col justify-between text-gray-800 border-2 border-[#0B2341] shadow-2xl relative">
+          <div class="flex justify-between items-start">
+            <div class="flex items-center gap-2">
+              <img src="/logo-prefeitura.png" alt="Prefeitura" class="h-6 w-auto object-contain" />
+              <div>
+                <h3 class="font-black uppercase tracking-wider text-[9px] text-[#0B2341]">Passe Livre Estudantil</h3>
+                <p class="text-[8px] font-bold text-gray-500">Prefeitura de Angelim</p>
+              </div>
+            </div>
+            <span class="bg-[#395D34] text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase">Oficial</span>
+          </div>
+
+          <div class="flex gap-3 items-center my-auto">
+            <img src="${estudante.foto_url}" alt="Foto" class="w-16 h-20 object-cover rounded-xl border-2 border-[#0B2341] shadow-md bg-gray-200 shrink-0" />
+            <div class="flex flex-col justify-center overflow-hidden text-left w-full">
+              <p class="text-[8px] text-gray-400 uppercase tracking-widest font-extrabold leading-none">Estudante</p>
+              <p class="font-black text-sm leading-tight truncate w-full mt-0.5 text-[#0B2341]">${estudante.nome}</p>
+              
+              <div class="mt-1">
+                <p class="text-[8px] text-gray-400 uppercase tracking-widest font-extrabold leading-none">Instituição</p>
+                <p class="font-bold text-[10px] text-gray-700 leading-tight truncate w-full">${estudante.instituicao_destino}</p>
+              </div>
+
+              <div class="flex justify-between gap-1 mt-1 w-full">
+                <div>
+                  <span class="text-[7px] text-gray-400 uppercase tracking-widest block">Rota</span>
+                  <p class="text-[9px] font-bold text-[#395D34] truncate max-w-[90px]">${estudante.rota || '-'}</p>
+                </div>
+                <div>
+                  <span class="text-[7px] text-gray-400 uppercase tracking-widest block">Validade</span>
+                  <p class="text-[9px] font-bold text-gray-700">${estudante.data_vencimento ? new Date(estudante.data_vencimento).toLocaleDateString('pt-BR', {timeZone: 'UTC'}) : '--/--/----'}</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex flex-col items-center justify-center border-l border-gray-200 pl-2 shrink-0">
+              <div class="bg-white p-1 border rounded-lg shadow-sm">
+                ${qrCodeSvg}
+              </div>
+              <span class="text-[7px] font-bold text-gray-500 mt-0.5">QR CODE</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 flex gap-3">
+          <button onclick="window.print()" class="bg-[#395D34] text-white font-bold py-3 px-6 rounded-xl shadow-lg text-sm">
+            Imprimir / Salvar PDF
+          </button>
+        </div>
+      </body>
+      </html>
+    `);
+    janelaSalvar.document.close();
   };
 
   const verificarVencimento = () => {
@@ -289,7 +417,8 @@ export default function CarteiraDigital() {
       .replace(/\{\{instituicao\}\}/g, estudante.instituicao_destino || '')
       .replace(/\{\{rota\}\}/g, estudante.rota || '')
       .replace(/\{\{curso\}\}/g, estudante.curso || '')
-      .replace(/\{\{matricula\}\}/g, estudante.matricula || '');
+      .replace(/\{\{matricula\}\}/g, estudante.matricula || '')
+      .replace(/\n/g, '<br />');
   };
 
   const imprimirDeclaracao = (decl: Declaracao) => {
@@ -300,6 +429,8 @@ export default function CarteiraDigital() {
       setModoImpressao(false);
     }, 500);
   };
+
+  const obterPosicaoAssinatura = (declaracao: Declaracao) => declaracao.assinatura_posicao || { x: 50, y: 84 };
 
   if (loading) return (
     <div className="h-[100dvh] bg-gray-50 flex flex-col items-center justify-center font-bold text-[#0B2341]">
@@ -314,60 +445,89 @@ export default function CarteiraDigital() {
       <style>
         {`
           @media print {
-            @page { margin: 0; padding: 0; }
-            body { margin: 0; padding: 0; background: white; }
+            @page { size: A4; margin: 0; }
+            body, html { width: 210mm; height: 297mm; background: white !important; margin: 0 !important; padding: 0 !important; }
+            .print\\:block { display: block !important; }
+            .print\\:hidden { display: none !important; }
           }
         `}
       </style>
 
+      {estudante && (
+        <div id="qr-code-export-container" className="hidden">
+          <QRCode value={estudante.id_estudante} size={70} level="M" />
+        </div>
+      )}
+
       {modoImpressao && declaracaoAtiva && (
-        <div className="hidden print:block w-full min-h-screen bg-white m-0 p-0 absolute top-0 left-0 z-[99999]">
-          <img src="/timbre.png" alt="Timbre" className="w-full h-auto object-cover m-0 p-0 block" />
-          <div className="p-12 text-justify text-gray-900 font-serif leading-relaxed text-lg" 
-               dangerouslySetInnerHTML={{ __html: parseVariaveisDeclaracao(declaracaoAtiva.conteudoHtml) }} />
-          {declaracaoAtiva.assinatura_url && (
-            <div className="mt-16 flex flex-col items-center justify-center w-full">
-              <img src={declaracaoAtiva.assinatura_url} alt="Assinatura" className="h-24 w-auto object-contain mb-2" />
-              <div className="border-t border-black w-64 text-center pt-2 font-bold uppercase text-sm">
-                Assinatura Autorizada
+        <div className="hidden print:block fixed inset-0 z-[99999] w-[210mm] h-[297mm] bg-white overflow-hidden m-0 p-0">
+          <div className="relative w-full h-full box-border p-[2.5cm]" style={{ fontFamily: 'Calibri, Aptos, Arial, sans-serif' }}>
+            {declaracaoAtiva.timbre_base64 && (
+              <img src={declaracaoAtiva.timbre_base64} alt="Timbre" className="absolute inset-0 h-full w-full object-contain pointer-events-none" />
+            )}
+            <div className="relative z-10 w-full h-full text-[11pt] leading-[1.15] text-justify text-gray-900"
+                 style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                 dangerouslySetInnerHTML={{ __html: parseVariaveisDeclaracao(declaracaoAtiva.conteudoHtml) }} />
+            {declaracaoAtiva.assinatura_url && (
+              <div style={{ left: `${obterPosicaoAssinatura(declaracaoAtiva).x}%`, top: `${obterPosicaoAssinatura(declaracaoAtiva).y}%` }} className="absolute z-20 -translate-x-1/2 -translate-y-1/2">
+                <img src={declaracaoAtiva.assinatura_url} alt="Assinatura autorizada" className="h-24 w-auto object-contain" />
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
       {!modoImpressao && declaracaoAtiva && (
-        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in print:hidden">
-          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-in fade-in print:hidden">
+          <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[92vh] max-h-[92vh]">
             <div className="bg-[#0B2341] p-4 flex items-center justify-between text-white shrink-0">
               <div className="flex items-center">
                 <FileText size={20} className="mr-2 text-[#395D34]" />
-                <h3 className="font-bold">{declaracaoAtiva.titulo}</h3>
+                <h3 className="font-bold text-sm sm:text-base">{declaracaoAtiva.titulo}</h3>
               </div>
               <button onClick={() => setDeclaracaoAtiva(null)} className="text-white/60 hover:text-white p-1"><X size={24} /></button>
             </div>
             
-            <div className="p-0 overflow-y-auto flex-1 bg-gray-50 border-b border-gray-200">
-              <div className="bg-white shadow-sm border m-4 min-h-[500px]">
-                 <img src="/timbre.png" alt="Timbre" className="w-full h-auto object-cover block" />
-                 <div className="p-8 text-justify text-gray-900 leading-relaxed" 
+            <div className="p-2 sm:p-6 overflow-y-auto flex-1 bg-gray-100 flex justify-center items-start">
+              <div className="relative bg-white shadow-xl w-full max-h-none sm:max-w-[210mm] sm:min-h-[297mm] aspect-[1/1.4142] sm:aspect-auto p-6 sm:p-[2.5cm] box-border overflow-hidden rounded-lg sm:rounded-none">
+                 {declaracaoAtiva.timbre_base64 && (
+                   <img src={declaracaoAtiva.timbre_base64} alt="Timbre" className="absolute inset-0 h-full w-full object-contain pointer-events-none" />
+                 )}
+                 <div className="relative z-10 w-full h-full text-[10pt] sm:text-[11pt] leading-[1.15] text-justify text-gray-900" 
+                      style={{ fontFamily: 'Calibri, Aptos, Arial, sans-serif', wordBreak: 'break-word', overflowWrap: 'break-word' }}
                       dangerouslySetInnerHTML={{ __html: parseVariaveisDeclaracao(declaracaoAtiva.conteudoHtml) }} />
                  {declaracaoAtiva.assinatura_url && (
-                    <div className="mt-12 mb-8 flex flex-col items-center justify-center w-full">
-                      <img src={declaracaoAtiva.assinatura_url} alt="Assinatura" className="h-20 w-auto object-contain mb-1" />
-                      <div className="border-t border-black w-48 text-center pt-1 font-bold uppercase text-xs">
-                        Assinatura Autorizada
-                      </div>
+                    <div style={{ left: `${obterPosicaoAssinatura(declaracaoAtiva).x}%`, top: `${obterPosicaoAssinatura(declaracaoAtiva).y}%` }} className="absolute z-20 -translate-x-1/2 -translate-y-1/2">
+                      <img src={declaracaoAtiva.assinatura_url} alt="Assinatura autorizada" className="h-16 sm:h-20 w-auto object-contain" />
                     </div>
                  )}
               </div>
             </div>
             
-            <div className="p-4 bg-white flex gap-3 shrink-0">
-              <button onClick={() => setDeclaracaoAtiva(null)} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition">Cancelar</button>
-              <button onClick={() => imprimirDeclaracao(declaracaoAtiva)} className="flex-1 flex justify-center items-center bg-[#395D34] text-white py-3 rounded-xl font-bold hover:bg-[#2c4928] shadow transition">
+            <div className="p-4 bg-white flex gap-3 shrink-0 border-t border-gray-200">
+              <button onClick={() => setDeclaracaoAtiva(null)} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition text-sm">Cancelar</button>
+              <button onClick={() => imprimirDeclaracao(declaracaoAtiva)} className="flex-1 flex justify-center items-center bg-[#395D34] text-white py-3 rounded-xl font-bold hover:bg-[#2c4928] shadow transition text-sm">
                 <Printer size={20} className="mr-2" /> Salvar PDF / Imprimir
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalLgpdAberto && (
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="bg-[#0B2341] p-4 flex items-center justify-between text-white shrink-0">
+              <h3 className="font-bold flex items-center"><ShieldCheck size={20} className="mr-2 text-[#395D34]" /> Privacidade & LGPD</h3>
+              <button onClick={() => setModalLgpdAberto(false)} className="text-white/60 hover:text-white p-1"><X size={24} /></button>
+            </div>
+            <div className="p-6 text-sm text-gray-700 space-y-3 max-h-[60vh] overflow-y-auto">
+              <p><strong>Uso dos seus dados:</strong> Seus dados (Nome, CPF, Instituição) são utilizados exclusivamente pela Prefeitura para gerenciar o Passe Livre Estudantil e validar embarques na frota oficial.</p>
+              <p><strong>Segurança:</strong> O sistema utiliza criptografia de ponta a ponta em trânsito (HTTPS) e dados protegidos em repouso nos servidores do Google Firebase.</p>
+              <p><strong>Minimização:</strong> Coletamos apenas as informações necessárias para confirmar o seu direito ao benefício.</p>
+            </div>
+            <div className="p-4 bg-gray-50">
+              <button onClick={() => setModalLgpdAberto(false)} className="w-full bg-[#395D34] text-white py-3 rounded-xl font-bold shadow hover:bg-[#2c4928] transition">Ciente</button>
             </div>
           </div>
         </div>
@@ -378,9 +538,14 @@ export default function CarteiraDigital() {
           <Bus size={22} className="mr-2 text-[#395D34]" />
           <span className="font-bold text-lg">Transporte Escolar</span>
         </div>
-        <button onClick={() => signOut(auth)} className="hover:text-red-300 transition-colors p-1">
-          <LogOut size={20} />
-        </button>
+        <div className="flex items-center gap-4">
+          <button onClick={() => setModalLgpdAberto(true)} className="text-white/70 hover:text-white transition-colors" title="Informações LGPD">
+            <ShieldCheck size={20} />
+          </button>
+          <button onClick={handleLogout} className="hover:text-red-300 transition-colors p-1" title="Sair">
+            <LogOut size={20} />
+          </button>
+        </div>
       </nav>
 
       <div className="flex-1 overflow-y-auto p-4 w-full max-w-md mx-auto flex flex-col gap-6 print:hidden">
@@ -395,7 +560,8 @@ export default function CarteiraDigital() {
               <div>
                 <label className="block text-sm font-semibold text-[#0B2341] mb-1">Seu CPF</label>
                 <input 
-                  type="text" 
+                  type="tel" 
+                  inputMode="numeric"
                   required
                   placeholder="000.000.000-00"
                   maxLength={14}
@@ -422,6 +588,7 @@ export default function CarteiraDigital() {
               )}
               
               <div 
+                ref={exportRef}
                 className="w-full aspect-[1.58] bg-transparent cursor-pointer group relative"
                 style={{ perspective: '1000px' }}
                 onClick={() => setFlipped(!flipped)}
@@ -538,7 +705,7 @@ export default function CarteiraDigital() {
                   onClick={handleSalvarCarteira}
                   className="w-full flex items-center justify-center gap-2 bg-[#0B2341] text-white py-3.5 rounded-xl font-bold hover:bg-[#071629] transition-colors shadow-md text-sm"
                 >
-                  <Download size={18} /> Salvar na Carteira
+                  <Download size={18} /> Salvar Carteirinha (PNG)
                 </button>
                 
                 {whatsappRota && (
@@ -587,7 +754,7 @@ export default function CarteiraDigital() {
                     <div key={viagem.id} className="flex flex-col p-3 bg-gray-50 rounded-xl border border-gray-100 hover:bg-white transition-colors">
                       <div className="flex items-center justify-between w-full">
                         <div className="flex items-center">
-                          <div className={`p-2 rounded-xl mr-3 ${viagem.tipo_viagem === 'ida' ? 'bg-[#395D34]/10 text-[#395D34]' : 'bg-[#0B2341]/10 text-[#0B2341]'}` }>
+                          <div className={`p-2 rounded-xl mr-3 ${viagem.tipo_viagem === 'ida' ? 'bg-[#395D34]/10 text-[#395D34]' : 'bg-[#0B2341]/10 text-[#0B2341]'}`}>
                             {viagem.tipo_viagem === 'ida' ? <MapPin size={16} /> : <Bus size={16} />}
                           </div>
                           <div>

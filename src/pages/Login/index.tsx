@@ -6,10 +6,11 @@ import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where } fro
 import { auth, googleProvider, db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { Bus, GraduationCap, ShieldCheck, ArrowRight, CheckCircle2, AlertCircle, KeyRound, Truck } from 'lucide-react';
+import { Bus, GraduationCap, ShieldCheck, ArrowRight, CheckCircle2, AlertCircle, KeyRound, Truck, Info } from 'lucide-react';
 
 export default function Login() {
   const [tipoAcesso, setTipoAcesso] = useState<'escolha' | 'estudante' | 'motorista'>('escolha');
+  const [lgpdAceito, setLgpdAceito] = useState(localStorage.getItem('lgpd_aceito') === 'true');
   
   // Estados para Google (Estudante/Admin)
   const [loadingAction, setLoadingAction] = useState(false);
@@ -25,9 +26,7 @@ export default function Login() {
   const { user } = useAuth();
   const { showAlert } = useAlert();
 
-  // Redirecionamento inteligente + Bypass Offline para o PWA abrir direto na carteirinha
   useEffect(() => {
-    // Verifica se existe cache de estudante no aparelho (modo offline instantâneo)
     const cachedKey = Object.keys(localStorage).find(k => k.startsWith('cache_estudante_'));
     if (cachedKey) {
       navigate('/minha-carteira');
@@ -43,6 +42,11 @@ export default function Login() {
     }
   }, [user, navigate]);
 
+  const aceitarLGPD = () => {
+    localStorage.setItem('lgpd_aceito', 'true');
+    setLgpdAceito(true);
+  };
+
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>, setter: React.Dispatch<React.SetStateAction<string>>) => {
     let value = e.target.value.replace(/\D/g, '');
     if (value.length > 11) value = value.slice(0, 11);
@@ -52,9 +56,6 @@ export default function Login() {
     setter(value);
   };
 
-  // =======================================================
-  // FLUXO 1: LOGIN MOTORISTA (CPF E SENHA)
-  // =======================================================
   const handleLoginMotorista = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cpfMotorista || cpfMotorista.length < 14) return showAlert('Digite o CPF completo.', 'error');
@@ -63,18 +64,25 @@ export default function Login() {
     setLoadingAction(true);
     try {
       const cpfLimpo = cpfMotorista.replace(/\D/g, '');
-      const fakeEmail = `${cpfLimpo}@motorista.com`; // Truque para usar o Firebase Auth nativo
+      const fakeEmail = `${cpfLimpo}@motorista.com`; 
       
       let motRef = doc(db, 'motoristas', cpfLimpo);
       let motSnap = await getDoc(motRef);
       let motoristaData = motSnap.exists() ? motSnap.data() : null;
 
       if (!motoristaData) {
-        const q = query(collection(db, 'motoristas'), where('cpf', '==', cpfLimpo));
+        const q = query(collection(db, 'motoristas'), where('cpf', '==', btoa(cpfLimpo)));
         const qSnap = await getDocs(q);
         if (!qSnap.empty) {
           motoristaData = qSnap.docs[0].data();
           motRef = qSnap.docs[0].ref;
+        } else {
+          const qLegacy = query(collection(db, 'motoristas'), where('cpf', '==', cpfLimpo));
+          const qLegacySnap = await getDocs(qLegacy);
+          if (!qLegacySnap.empty) {
+            motoristaData = qLegacySnap.docs[0].data();
+            motRef = qLegacySnap.docs[0].ref;
+          }
         }
       }
 
@@ -120,9 +128,6 @@ export default function Login() {
     }
   };
 
-  // =======================================================
-  // FLUXO 2: LOGIN GOOGLE (ESTUDANTES E ADMINS)
-  // =======================================================
   const handleGoogleLogin = async () => {
     setLoadingAction(true);
     try {
@@ -163,7 +168,7 @@ export default function Login() {
       setUsuarioPendenteGoogle(firebaseUser);
       setEtapaCpfGoogle(true);
 
-    } catch (err) {
+    } catch {
       showAlert('Erro ao fazer login com o Google.', 'error');
     } finally {
       setLoadingAction(false);
@@ -177,23 +182,36 @@ export default function Login() {
     
     try {
       const cpfLimpo = cpfInputGoogle.replace(/\D/g, '');
+      const cpfHash = btoa(cpfLimpo);
       let roleEncontrada = '';
       let nomeFinal = usuarioPendenteGoogle.displayName || 'Usuário';
 
-      const estRef = doc(db, 'estudantes', cpfLimpo);
-      const estSnap = await getDoc(estRef);
-      if (estSnap.exists()) {
+      const qEstudante = query(collection(db, 'estudantes'), where('cpf_hash', '==', cpfHash));
+      const snapEstudante = await getDocs(qEstudante);
+      
+      let estudanteDocId = cpfLimpo;
+
+      if (!snapEstudante.empty) {
         roleEncontrada = 'estudante';
-        nomeFinal = estSnap.data().nome || nomeFinal;
-        // Salva o cache local no primeiro vínculo
-        localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(estSnap.data()));
+        estudanteDocId = snapEstudante.docs[0].id;
+        const dadosAluno = snapEstudante.docs[0].data();
+        nomeFinal = dadosAluno.nome || nomeFinal;
+        localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(dadosAluno));
       } else {
-        const authSnap = await getDocs(collection(db, 'usuarios_autorizados'));
-        authSnap.forEach(wDoc => {
-          if (String(wDoc.data().cpf || '').replace(/\D/g, '') === cpfLimpo) {
-            roleEncontrada = wDoc.data().role || 'cadastrante';
-          }
-        });
+        const estRef = doc(db, 'estudantes', cpfLimpo);
+        const estSnap = await getDoc(estRef);
+        if (estSnap.exists()) {
+          roleEncontrada = 'estudante';
+          nomeFinal = estSnap.data().nome || nomeFinal;
+          localStorage.setItem(`cache_estudante_${cpfLimpo}`, JSON.stringify(estSnap.data()));
+        } else {
+          const authSnap = await getDocs(collection(db, 'usuarios_autorizados'));
+          authSnap.forEach(wDoc => {
+            if (String(wDoc.data().cpf || '').replace(/\D/g, '') === cpfLimpo) {
+              roleEncontrada = wDoc.data().role || 'cadastrante';
+            }
+          });
+        }
       }
 
       if (!roleEncontrada) {
@@ -208,12 +226,13 @@ export default function Login() {
         nome: nomeFinal,
         role: roleEncontrada,
         cpf: cpfLimpo,
+        id_estudante: estudanteDocId,
         criadoEm: new Date()
       }, { merge: true });
 
       showAlert(`Acesso liberado!`, 'success');
       window.location.reload();
-    } catch (error) {
+    } catch {
       showAlert('Erro de conexão ao vincular CPF.', 'error');
     } finally {
       setLoadingAction(false);
@@ -222,11 +241,10 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0B2341] via-[#071629] to-[#040d18] flex flex-col justify-center items-center p-4 relative overflow-hidden font-sans">
-      
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-[#395D34]/20 rounded-full blur-3xl pointer-events-none"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-[#890013]/20 rounded-full blur-3xl pointer-events-none"></div>
 
-      <div className="max-w-md w-full bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl p-8 relative z-10 border border-white/20 flex flex-col items-center">
+      <div className="max-w-md w-full bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl p-8 relative z-10 border border-white/20 flex flex-col items-center mb-16">
         
         <div className="w-20 h-20 bg-gradient-to-br from-[#0B2341] to-[#395D34] rounded-2xl flex items-center justify-center text-white shadow-xl mb-6 transform -rotate-3 hover:rotate-0 transition-transform">
           <Bus size={40} />
@@ -292,7 +310,16 @@ export default function Login() {
             </div>
             <div>
               <label className="block text-xs font-bold text-[#0B2341] uppercase mb-1">Seu CPF</label>
-              <input type="text" required value={cpfInputGoogle} onChange={(e) => handleCpfChange(e, setCpfInputGoogle)} placeholder="000.000.000-00" className="w-full bg-gray-50 border border-gray-300 rounded-xl p-3 text-sm font-bold text-[#0B2341] outline-none focus:border-[#395D34]" />
+              <input 
+                type="tel" 
+                inputMode="numeric" 
+                required 
+                value={cpfInputGoogle} 
+                onChange={(e) => handleCpfChange(e, setCpfInputGoogle)} 
+                placeholder="000.000.000-00" 
+                maxLength={14}
+                className="w-full bg-gray-50 border border-gray-300 rounded-xl p-3 text-sm font-bold text-[#0B2341] outline-none focus:border-[#395D34]" 
+              />
             </div>
             <button type="submit" disabled={loadingAction} className="w-full flex justify-center items-center py-3.5 px-6 rounded-xl bg-[#0B2341] text-white hover:bg-[#071629] font-bold shadow-md transition disabled:opacity-50">
               <CheckCircle2 size={18} className="mr-2" /> <span>{loadingAction ? 'Verificando...' : 'Acessar Carteira'}</span>
@@ -312,7 +339,16 @@ export default function Login() {
             </div>
             <div>
               <label className="block text-xs font-bold text-[#0B2341] uppercase mb-1">CPF (Somente Números)</label>
-              <input type="text" required value={cpfMotorista} onChange={(e) => handleCpfChange(e, setCpfMotorista)} placeholder="000.000.000-00" className="w-full bg-gray-50 border border-gray-300 rounded-xl p-3 text-sm font-bold text-[#0B2341] outline-none focus:border-[#395D34]" />
+              <input 
+                type="tel" 
+                inputMode="numeric" 
+                required 
+                value={cpfMotorista} 
+                onChange={(e) => handleCpfChange(e, setCpfMotorista)} 
+                placeholder="000.000.000-00" 
+                maxLength={14}
+                className="w-full bg-gray-50 border border-gray-300 rounded-xl p-3 text-sm font-bold text-[#0B2341] outline-none focus:border-[#395D34]" 
+              />
             </div>
             <div>
               <label className="block text-xs font-bold text-[#0B2341] uppercase mb-1">Senha (Mín. 6 letras/números)</label>
@@ -328,10 +364,26 @@ export default function Login() {
         )}
 
         <div className="mt-8 flex items-center text-[11px] text-gray-400 font-medium">
-          <ShieldCheck size={14} className="mr-1 text-[#395D34]" /> Sistema Seguro e Oficial da Prefeitura
+          <ShieldCheck size={14} className="mr-1 text-[#395D34]" /> Ambiente Seguro (Criptografia Padrão)
         </div>
-
       </div>
+
+      {!lgpdAceito && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white shadow-[0_-5px_20px_rgba(0,0,0,0.1)] p-4 flex flex-col md:flex-row items-center justify-between z-50 animate-in slide-in-from-bottom-10 border-t-4 border-[#395D34]">
+          <div className="flex items-center mb-3 md:mb-0">
+            <Info size={24} className="text-[#0B2341] mr-3 shrink-0" />
+            <p className="text-sm text-gray-700 font-medium text-center md:text-left">
+              <strong>Privacidade e LGPD:</strong> Utilizamos seus dados apenas para gestão do transporte escolar, com segurança garantida pelo Firebase. Ao continuar, você concorda com nossos termos.
+            </p>
+          </div>
+          <button 
+            onClick={aceitarLGPD}
+            className="w-full md:w-auto whitespace-nowrap bg-[#395D34] text-white px-6 py-2.5 rounded-lg font-bold hover:bg-[#2c4928] transition shadow-md"
+          >
+            Entendi e Aceito
+          </button>
+        </div>
+      )}
     </div>
   );
 }
