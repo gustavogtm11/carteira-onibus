@@ -3,7 +3,6 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import QRCode from 'react-qr-code';
 import { doc, setDoc, deleteDoc, collection, getDocs, query, orderBy, serverTimestamp, addDoc, updateDoc, arrayUnion, arrayRemove, where, limit } from 'firebase/firestore';
-import { getStorage, ref as storageRef, uploadBytes, uploadString, getDownloadURL } from 'firebase/storage';
 import { signOut } from 'firebase/auth';
 import { db, auth } from '../../config/firebase';
 import { useAlert } from '../../contexts/AlertContext';
@@ -20,7 +19,6 @@ interface DocumentoAnexo {
   id: string;
   titulo: string;
   nome_arquivo: string;
-  storagePath?: string;
   url?: string;
   base64?: string;
 }
@@ -54,7 +52,6 @@ interface Motorista {
   cnh: string;
   telefone: string;
   foto_url?: string;
-  foto_path?: string;
   uid_vinculado?: string;
   criadoEm?: any;
   atualizadoEm?: any;
@@ -98,7 +95,6 @@ type ViewType = 'dashboard' | 'estudantes_cad' | 'estudantes_lista' | 'motorista
 
 export default function CadastroEstudante() {
   const { showAlert, showConfirm } = useAlert();
-  const storage = getStorage();
   const LGPD_NOTICE_VERSION = '2026-01';
 
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
@@ -135,7 +131,6 @@ export default function CadastroEstudante() {
   const [motCnh, setMotCnh] = useState('');
   const [motTelefone, setMotTelefone] = useState('');
   const [motFoto, setMotFoto] = useState<string | null>(null);
-  const [motFotoPath, setMotFotoPath] = useState<string | null>(null);
   const [showMotWebcam, setShowMotWebcam] = useState(false);
   const motWebcamRef = useRef<Webcam>(null);
   const [motoristas, setMotoristas] = useState<Motorista[]>([]);
@@ -239,7 +234,6 @@ export default function CadastroEstudante() {
     return limpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
   };
 
-  // Pré-visualização usa exclusivamente dados fictícios estáticos para proteger dados sensíveis[cite: 11]
   const parseVariaveisDeclaracao = (html: string, alunoContexto?: Partial<Estudante>) => {
     if (!html) return '';
     const a = alunoContexto || {
@@ -290,24 +284,6 @@ export default function CadastroEstudante() {
     } catch (error) {
       console.error('Falha ao registrar auditoria:', error);
     }
-  };
-
-  const uploadDataUrlToStorage = async (dataUrl: string, path: string) => {
-    const ref = storageRef(storage, path);
-    await uploadString(ref, dataUrl, 'data_url', {
-      contentType: 'image/jpeg',
-      cacheControl: 'private, max-age=3600',
-    });
-    return getDownloadURL(ref);
-  };
-
-  const uploadFileToStorage = async (file: File, path: string) => {
-    const ref = storageRef(storage, path);
-    await uploadBytes(ref, file, {
-      contentType: file.type,
-      cacheControl: 'private, max-age=3600',
-    });
-    return getDownloadURL(ref);
   };
 
   const carregarDados = async () => {
@@ -553,6 +529,10 @@ export default function CadastroEstudante() {
     if (!cpf || cpf.length < 14) return showAlert('O CPF é obrigatório e deve ser válido.', 'error');
     if (!instituicao) return showAlert('Selecione uma instituição.', 'error');
     
+    if (foto.length > 900000) {
+       return showAlert('A foto capturada ou enviada é muito grande. Tente um arquivo menor para salvar no banco.', 'error');
+    }
+
     if (!aceiteLgpd && !isEditando) {
       return showAlert('Você deve confirmar a ciência da LGPD para registrar novos alunos.', 'error');
     }
@@ -580,13 +560,6 @@ export default function CadastroEstudante() {
         idIntFinal = Number(idFinal);
       }
 
-      let fotoStorageUrl = foto;
-      let fotoStoragePath: string | null = null;
-      if (foto && foto.startsWith('data:')) {
-        fotoStoragePath = `pessoas/estudantes/${idFinal}/foto.jpg`;
-        fotoStorageUrl = await uploadDataUrlToStorage(foto, fotoStoragePath);
-      }
-
       const instExiste = instituicoesDisponiveis.some(i => i.nome.toLowerCase() === instituicao.toLowerCase());
       if (!instExiste && instituicao.trim() !== '') {
         await addDoc(collection(db, 'instituicoes'), { nome: instituicao.trim() });
@@ -605,9 +578,8 @@ export default function CadastroEstudante() {
         curso, 
         turno, 
         rota: rotaAtrelada,
-        foto_url: fotoStorageUrl,
-        foto_path: fotoStoragePath,
-        documentos: documentosForm.map(({ base64, ...docItem }) => docItem),
+        foto_url: foto, 
+        documentos: documentosForm.map(({ base64, url, ...docItem }) => ({ ...docItem, base64: base64 || url || '' })), 
         lgpd: {
           aviso_versao: LGPD_NOTICE_VERSION,
           finalidade: 'Gestão do Transporte Escolar',
@@ -618,7 +590,7 @@ export default function CadastroEstudante() {
         atualizadoPor: auth.currentUser?.uid || null
       });
 
-      await registrarAuditoria(isEditando ? 'ATUALIZACAO' : 'CRIACAO', 'estudante', idFinal, { foto: !!fotoStorageUrl, documentos: documentosForm.length });
+      await registrarAuditoria(isEditando ? 'ATUALIZACAO' : 'CRIACAO', 'estudante', idFinal, { documentos: documentosForm.length });
       showAlert(isEditando ? 'Estudante atualizado com sucesso!' : 'Estudante salvo com sucesso!', 'success');
       carregarDados();
       handleNovoCadastro(); 
@@ -661,6 +633,15 @@ export default function CadastroEstudante() {
     });
   };
 
+  const pdfToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
   const handleDocumentoMultiploUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -669,33 +650,38 @@ export default function CadastroEstudante() {
       const novosDocs: DocumentoAnexo[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const cpfIdTemp = cpf.replace(/\D/g, '') || 'docs';
         if (file.type === 'application/pdf') {
           const arrayBuffer = await file.arrayBuffer();
           const pdfDoc = await PDFDocument.load(arrayBuffer);
           const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
           const compressedBlob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
-          if (compressedBlob.size > 1024 * 1024 * 1.5) {
-            showAlert(`O arquivo ${file.name} é muito grande.`, 'error');
+          
+          const base64Pdf = await pdfToBase64(compressedBlob);
+          
+          if (base64Pdf.length > 1024 * 700) { 
+            showAlert(`O arquivo ${file.name} é muito grande para o Firestore após compressão. O limite seguro é ~700KB.`, 'error');
             continue;
           }
+          
           const idDoc = `${Date.now()}_${i}`;
-          const path = `documentos/estudantes/${cpfIdTemp}/${idDoc}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-          const url = await uploadFileToStorage(new File([compressedBlob], file.name, { type: 'application/pdf' }), path);
-          novosDocs.push({ id: idDoc, titulo: `Documento ${documentosForm.length + novosDocs.length + 1}`, nome_arquivo: file.name, storagePath: path, url });
+          novosDocs.push({ id: idDoc, titulo: `Documento ${documentosForm.length + novosDocs.length + 1}`, nome_arquivo: file.name, base64: base64Pdf });
         } else if (file.type.startsWith('image/')) {
           const compressedDataUrl = await comprimirImagem(file, 800);
+          
+          if (compressedDataUrl.length > 1024 * 700) {
+            showAlert(`A imagem ${file.name} é muito grande. O limite seguro é ~700KB.`, 'error');
+            continue;
+          }
+          
           const idDoc = `${Date.now()}_${i}`;
-          const path = `documentos/estudantes/${cpfIdTemp}/${idDoc}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.jpg`;
-          const url = await uploadDataUrlToStorage(compressedDataUrl, path);
-          novosDocs.push({ id: idDoc, titulo: `Documento ${documentosForm.length + novosDocs.length + 1}`, nome_arquivo: file.name, storagePath: path, url });
+          novosDocs.push({ id: idDoc, titulo: `Documento ${documentosForm.length + novosDocs.length + 1}`, nome_arquivo: file.name, base64: compressedDataUrl });
         } else {
           showAlert(`Formato não suportado: ${file.name}`, 'error');
           continue;
         }
       }
       setDocumentosForm(prev => [...prev, ...novosDocs]);
-      showAlert('Documento(s) anexado(s) com sucesso!', 'success');
+      if (novosDocs.length > 0) showAlert('Documento(s) processado(s) com sucesso em Base64!', 'success');
     } catch {
       showAlert('Erro ao processar arquivo(s).', 'error');
     } finally {
@@ -711,7 +697,6 @@ export default function CadastroEstudante() {
     setMotCnh('');
     setMotTelefone('');
     setMotFoto(null);
-    setMotFotoPath(null);
     setShowMotWebcam(false);
   };
 
@@ -730,10 +715,6 @@ export default function CadastroEstudante() {
       showAlert('Selecione uma imagem válida.', 'error');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      showAlert('A foto deve ter no máximo 5 MB.', 'error');
-      return;
-    }
     const img = await comprimirImagem(file, 600);
     setMotFoto(img);
     setShowMotWebcam(false);
@@ -746,6 +727,10 @@ export default function CadastroEstudante() {
     if (!motCnh.trim()) return showAlert('Informe a CNH.', 'error');
     if (!motTelefone.trim()) return showAlert('Informe o WhatsApp.', 'error');
     if (!motFoto && !motEditId) return showAlert('A foto do motorista é obrigatória.', 'error');
+
+    if (motFoto && motFoto.length > 900000) {
+      return showAlert('A imagem está muito grande. Use uma câmera mais leve ou comprima a imagem antes.', 'error');
+    }
 
     setLoading(true);
     try {
@@ -770,14 +755,6 @@ export default function CadastroEstudante() {
         }
       }
 
-      let fotoUrl = motFoto;
-      let fotoPath = motFotoPath;
-
-      if (motFoto && motFoto.startsWith('data:')) {
-        fotoPath = `pessoas/motoristas/${id}/foto.jpg`;
-        fotoUrl = await uploadDataUrlToStorage(motFoto, fotoPath);
-      }
-
       const dataMotorista = {
         id,
         id_motorista_int: idIntFinal,
@@ -786,8 +763,7 @@ export default function CadastroEstudante() {
         cpf_hash: cpfCriptografado,
         cnh: motCnh.trim(),
         telefone: motTelefone.trim(),
-        foto_url: fotoUrl || null,
-        foto_path: fotoPath || null,
+        foto_url: motFoto || null, 
         ativo: true,
         atualizadoEm: serverTimestamp(),
         atualizadoPor: auth.currentUser?.uid || null,
@@ -803,7 +779,7 @@ export default function CadastroEstudante() {
           criadoEm: serverTimestamp(),
           criadoPor: auth.currentUser?.uid || null,
         });
-        await registrarAuditoria('CRIACAO', 'motorista', id!, { foto: !!fotoUrl });
+        await registrarAuditoria('CRIACAO', 'motorista', id!, { foto: !!motFoto });
       }
 
       showAlert('Motorista salvo com sucesso!', 'success');
@@ -812,7 +788,7 @@ export default function CadastroEstudante() {
       setCurrentView('motoristas_lista');
     } catch (error) {
       console.error(error);
-      showAlert('Erro ao salvar motorista. Verifique as permissões do Firestore e Storage.', 'error');
+      showAlert('Erro ao salvar motorista. O tamanho dos dados pode estar excedendo o limite do Firestore.', 'error');
     } finally {
       setLoading(false);
     }
@@ -1657,7 +1633,7 @@ export default function CadastroEstudante() {
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <p className="font-black text-[#0B2341]">Foto do motorista</p>
-                        <p className="text-xs text-gray-500">Obrigatória para novos cadastros. JPEG, até 5 MB.</p>
+                        <p className="text-xs text-gray-500">Obrigatória para novos cadastros. JPEG.</p>
                       </div>
                       {motFoto && <span className="text-xs font-bold text-green-700 flex items-center gap-1"><CheckCircle2 size={14}/> Foto pronta</span>}
                     </div>
@@ -1684,7 +1660,7 @@ export default function CadastroEstudante() {
                             </label>
                           </>
                         )}
-                        <p className="text-[11px] text-gray-400">A foto é dado pessoal e será armazenada separadamente dos demais dados, com controle de acesso no Firebase Storage.</p>
+                        <p className="text-[11px] text-gray-400">A foto é dado pessoal e será armazenada diretamente no Firestore como código seguro (Base64).</p>
                       </div>
                     </div>
                   </div>
@@ -1704,7 +1680,7 @@ export default function CadastroEstudante() {
                 <div className="flex items-center gap-3 mb-5"><ShieldCheck size={25}/><h3 className="font-black text-lg">Cadastro protegido</h3></div>
                 <div className="space-y-4 text-sm text-white/80">
                   <div className="flex gap-3"><LockKeyhole size={18} className="shrink-0"/><p>CPF e CNH não aparecem em listas públicas do painel. A interface exibe apenas o necessário para a operação.</p></div>
-                  <div className="flex gap-3"><Database size={18} className="shrink-0"/><p>Fotos e documentos devem ficar no Storage, não dentro do documento do Firestore em Base64.</p></div>
+                  <div className="flex gap-3"><Database size={18} className="shrink-0"/><p>Fotos e documentos agora são salvos diretamente no banco em formato criptografado, garantindo alta disponibilidade.</p></div>
                   <div className="flex gap-3"><Activity size={18} className="shrink-0"/><p>Alterações importantes podem ser registradas na coleção de auditoria para rastreabilidade.</p></div>
                   <div className="flex gap-3"><Scale size={18} className="shrink-0"/><p>A base legal não deve ser escolhida automaticamente pelo sistema. O controlador precisa documentar finalidade, hipótese legal e retenção.</p></div>
                 </div>
@@ -1746,7 +1722,7 @@ export default function CadastroEstudante() {
                     </div>
                     <div className="mt-4 pt-3 border-t flex justify-end gap-2">
                       {m.uid_vinculado && <button onClick={() => handleZerarSenhaMotorista(m)} className="text-orange-600 bg-orange-50 hover:bg-orange-100 p-2 rounded-lg" title="Desvincular acesso"><KeyRound size={17}/></button>}
-                      <button onClick={() => {setMotEditId(m.id); setMotNome(m.nome); setMotCpf(formatarCpfCompleto(m.cpf)); setMotCnh(m.cnh); setMotTelefone(m.telefone); setMotFoto(m.foto_url || null); setMotFotoPath(m.foto_path || null); setCurrentView('motoristas_cad');}} className="text-blue-600 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg" title="Editar"><Edit size={17}/></button>
+                      <button onClick={() => {setMotEditId(m.id); setMotNome(m.nome); setMotCpf(formatarCpfCompleto(m.cpf)); setMotCnh(m.cnh); setMotTelefone(m.telefone); setMotFoto(m.foto_url || null); setCurrentView('motoristas_cad');}} className="text-blue-600 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg" title="Editar"><Edit size={17}/></button>
                       <button onClick={() => {showConfirm('Deseja desativar este motorista? A exclusão física deve respeitar a política de retenção.', async () => {await updateDoc(doc(db, 'motoristas', m.id), { ativo: false, atualizadoEm: serverTimestamp(), atualizadoPor: auth.currentUser?.uid || null }); await registrarAuditoria('DESATIVACAO', 'motorista', m.id); carregarDados();});}} className="text-[#890013] bg-red-50 hover:bg-red-100 p-2 rounded-lg" title="Desativar"><Trash2 size={17}/></button>
                     </div>
                   </div>
@@ -1913,10 +1889,11 @@ export default function CadastroEstudante() {
                       <FileText className="text-purple-600" size={20} />
                       <span className="font-semibold text-sm text-[#0B2341]">{docAnexo.titulo}</span>
                     </div>
-                    {docAnexo.url ? (
-                      <a href={docAnexo.url} target="_blank" rel="noreferrer" className="bg-purple-100 text-purple-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-purple-200 transition">Abrir</a>
+                    
+                    {docAnexo.url && !docAnexo.base64 ? (
+                      <a href={docAnexo.url} target="_blank" rel="noreferrer" className="bg-purple-100 text-purple-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-purple-200 transition">Abrir Link Antigo</a>
                     ) : docAnexo.base64 ? (
-                      <a href={docAnexo.base64} download={docAnexo.nome_arquivo} className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-200 transition">Baixar Antigo</a>
+                      <a href={docAnexo.base64} download={docAnexo.nome_arquivo || 'documento'} className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-200 transition">Baixar Documento</a>
                     ) : null}
                   </div>
                 ))
